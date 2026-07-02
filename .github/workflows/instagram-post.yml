@@ -10,20 +10,7 @@ on:
     - cron: '0 13 * * *'
     - cron: '0 16 * * *'
     - cron: '0 19 * * *'
-  workflow_dispatch:  # allows manual triggering from the Actions tab for testing
-    inputs:
-      source:
-        description: 'Image source to use (leave blank for random)'
-        required: false
-        type: choice
-        default: ''
-        options:
-          - ''
-          - stability
-          - met
-          - nasa
-          - artic
-          - commons
+  workflow_dispatch: {}  # allows manual triggering from the Actions tab for testing
 
 jobs:
   post:
@@ -41,7 +28,6 @@ jobs:
         run: pip install -r requirements.txt
 
       - name: Random delay (so posting time doesn't look robotically exact)
-        if: github.event_name != 'workflow_dispatch'
         run: |
           DELAY=$((RANDOM % 3000))
           echo "Sleeping for $DELAY seconds"
@@ -55,13 +41,7 @@ jobs:
           IG_ACCESS_TOKEN: ${{ secrets.IG_ACCESS_TOKEN }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           STABILITY_API_KEY: ${{ secrets.STABILITY_API_KEY }}
-          SOURCE: ${{ inputs.source }}
-        run: |
-          if [ -n "$SOURCE" ]; then
-            python post_to_instagram.py "$SOURCE"
-          else
-            python post_to_instagram.py
-          fi
+        run: python post_to_instagram.py
 
       - name: Commit updated quote state
         run: |
