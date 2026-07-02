@@ -3,7 +3,7 @@
 Upload an image to Cloudinary and publish it to Instagram via the Graph API.
 
 Usage:
-    python post_to_instagram.py [stability|met|nasa]
+    python post_to_instagram.py [stability|met|nasa|artic]
 
     If a source is omitted, one is chosen at random each run.
 
@@ -31,6 +31,9 @@ MET_API_BASE = "https://collectionapi.metmuseum.org/public/collection/v1"
 MET_SEARCH_TERMS = ["abstract", "geometric abstraction", "cubism", "constructivism", "de stijl"]
 
 NASA_APOD_URL = "https://api.nasa.gov/planetary/apod"
+
+ARTIC_API_BASE = "https://api.artic.edu/api/v1/artworks"
+ARTIC_SEARCH_TERMS = ["abstract", "geometric abstraction", "cubism", "constructivism", "de stijl", "minimalism"]
 
 SHAKESPEARE_QUOTES = [
     "We are such stuff as dreams are made on, and our little life is rounded with a sleep. -- The Tempest",
@@ -228,6 +231,51 @@ def fetch_nasa_apod(output_path: str, api_key: str, max_attempts: int = 10) -> s
     raise RuntimeError(f"Could not find a usable NASA APOD image after {max_attempts} attempts")
 
 
+def fetch_artic_artwork(output_path: str, max_attempts: int = 15) -> str:
+    """
+    Search the Art Institute of Chicago's public API for a public-domain
+    abstract/geometric artwork, download its image, and return an attribution string.
+    """
+    query = random.choice(ARTIC_SEARCH_TERMS)
+    search_resp = requests.get(
+        f"{ARTIC_API_BASE}/search",
+        params={
+            "q": query,
+            "fields": "id,title,artist_display,date_display,image_id,is_public_domain",
+            "limit": 100,
+        },
+        timeout=30,
+    )
+    search_resp.raise_for_status()
+    results = search_resp.json().get("data") or []
+
+    if not results:
+        raise RuntimeError(f"No Art Institute of Chicago results found for query '{query}'")
+
+    random.shuffle(results)
+
+    for artwork in results[:max_attempts]:
+        if not artwork.get("is_public_domain") or not artwork.get("image_id"):
+            continue
+
+        image_url = f"https://www.artic.edu/iiif/2/{artwork['image_id']}/full/843,/0/default.jpg"
+        image_resp = requests.get(image_url, timeout=60)
+        if image_resp.status_code != 200:
+            continue
+
+        with open(output_path, "wb") as f:
+            f.write(image_resp.content)
+
+        title = artwork.get("title") or "Untitled"
+        artist = artwork.get("artist_display") or "Unknown artist"
+        date = artwork.get("date_display") or ""
+        attribution = f"{title} -- {artist}" + (f", {date}" if date else "")
+        attribution += "\nThe Art Institute of Chicago, Open Access (CC0)"
+        return attribution
+
+    raise RuntimeError(f"Could not find a usable public-domain image for query '{query}' after {max_attempts} attempts")
+
+
 def get_env(name: str) -> str:
     value = os.environ.get(name)
     if not value:
@@ -318,7 +366,7 @@ def publish_media(ig_user_id: str, access_token: str, creation_id: str) -> str:
 
 
 def main():
-    valid_sources = ("stability", "met", "nasa")
+    valid_sources = ("stability", "met", "nasa", "artic")
     if len(sys.argv) not in (1, 2) or (len(sys.argv) == 2 and sys.argv[1] not in valid_sources):
         print(f"Usage: python post_to_instagram.py [{'|'.join(valid_sources)}]", file=sys.stderr)
         print("  If omitted, a source is chosen at random.", file=sys.stderr)
@@ -358,6 +406,11 @@ def main():
             nasa_key = os.environ.get("NASA_API_KEY", "DEMO_KEY")
             print("Fetching NASA's Astronomy Picture of the Day...")
             attribution = fetch_nasa_apod(image_path, nasa_key)
+            print(f"  -> {attribution}")
+
+        elif source == "artic":
+            print("Fetching a public-domain artwork from the Art Institute of Chicago...")
+            attribution = fetch_artic_artwork(image_path)
             print(f"  -> {attribution}")
 
         print("Selecting caption...")
