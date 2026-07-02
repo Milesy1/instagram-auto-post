@@ -37,7 +37,18 @@ ARTIC_API_BASE = "https://api.artic.edu/api/v1/artworks"
 ARTIC_SEARCH_TERMS = ["abstract", "geometric abstraction", "cubism", "constructivism", "de stijl", "minimalism"]
 
 WIKIMEDIA_API_BASE = "https://commons.wikimedia.org/w/api.php"
-WIKIMEDIA_SEARCH_TERMS = ["fractal", "chaos theory", "geometric abstract", "strange attractor"]
+WIKIMEDIA_SEARCH_TERMS = [
+    "geometric abstract art",
+    "wireframe",
+    "monochrome pattern",
+    "mathematical diagram",
+    "vector field illustration",
+    "topology diagram",
+    "strange attractor",
+    "fractal art",
+]
+WIKIMEDIA_CATEGORY_BLOCKLIST = ("archaeolog", "pottery", "museum object", "ceramic", "ancient")
+WIKIMEDIA_PREFERRED_CATEGORIES = ("mathematical diagram", "fractal art", "computer-generated imagery", "abstract art")
 WIKIMEDIA_HEADERS = {"User-Agent": "instagram-auto-post/1.0 (https://github.com/milesy1/instagram-auto-post)"}
 
 SHAKESPEARE_QUOTES = [
@@ -313,10 +324,28 @@ def _strip_html(text: str) -> str:
     return re.sub(r"<[^>]+>", "", text or "").strip()
 
 
+def _category_names(page: dict) -> list:
+    """Lowercased Commons category titles for a page, e.g. 'category:fractal art'."""
+    return [c.get("title", "").lower() for c in (page.get("categories") or [])]
+
+
+def _has_blocklisted_category(categories: list) -> bool:
+    return any(keyword in cat for cat in categories for keyword in WIKIMEDIA_CATEGORY_BLOCKLIST)
+
+
+def _has_preferred_category(categories: list) -> bool:
+    return any(keyword in cat for cat in categories for keyword in WIKIMEDIA_PREFERRED_CATEGORIES)
+
+
 def fetch_wikimedia_image(output_path: str, max_attempts: int = 25) -> str:
     """
     Search Wikimedia Commons for a public-domain / CC-licensed image matching a
     configurable search term, download it, and return an attribution string.
+
+    Results are excluded if their Commons categories match WIKIMEDIA_CATEGORY_BLOCKLIST
+    (e.g. archaeology/pottery/museum objects), and preferred if they match
+    WIKIMEDIA_PREFERRED_CATEGORIES (e.g. mathematical diagrams, fractal art), so the
+    subject matter stays consistent with the account's dark/minimal/geometric aesthetic.
     """
     query = random.choice(WIKIMEDIA_SEARCH_TERMS)
     search_resp = requests.get(
@@ -340,6 +369,9 @@ def fetch_wikimedia_image(output_path: str, max_attempts: int = 25) -> str:
 
     random.shuffle(results)
 
+    preferred_candidates = []
+    fallback_candidates = []
+
     for result in results:
         title = result.get("title")
         if not title:
@@ -350,8 +382,9 @@ def fetch_wikimedia_image(output_path: str, max_attempts: int = 25) -> str:
             params={
                 "action": "query",
                 "titles": title,
-                "prop": "imageinfo",
+                "prop": "imageinfo|categories",
                 "iiprop": "url|mime|extmetadata",
+                "cllimit": "max",
                 "format": "json",
             },
             headers=WIKIMEDIA_HEADERS,
@@ -378,6 +411,17 @@ def fetch_wikimedia_image(output_path: str, max_attempts: int = 25) -> str:
         if not image_url:
             continue
 
+        categories = _category_names(page)
+        if _has_blocklisted_category(categories):
+            continue
+
+        candidate = (title, image_url, license_short, extmetadata)
+        if _has_preferred_category(categories):
+            preferred_candidates.append(candidate)
+        else:
+            fallback_candidates.append(candidate)
+
+    for title, image_url, license_short, extmetadata in preferred_candidates + fallback_candidates:
         image_resp = requests.get(image_url, headers=WIKIMEDIA_HEADERS, timeout=60)
         if image_resp.status_code != 200:
             continue
