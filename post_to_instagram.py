@@ -231,7 +231,7 @@ def fetch_nasa_apod(output_path: str, api_key: str, max_attempts: int = 10) -> s
     raise RuntimeError(f"Could not find a usable NASA APOD image after {max_attempts} attempts")
 
 
-def fetch_artic_artwork(output_path: str, max_attempts: int = 15) -> str:
+def fetch_artic_artwork(output_path: str, max_attempts: int = 100) -> str:
     """
     Search the Art Institute of Chicago's public API for a public-domain
     abstract/geometric artwork, download its image, and return an attribution string.
@@ -241,6 +241,7 @@ def fetch_artic_artwork(output_path: str, max_attempts: int = 15) -> str:
         f"{ARTIC_API_BASE}/search",
         params={
             "q": query,
+            "query[term][is_public_domain]": "true",
             "fields": "id,title,artist_display,date_display,image_id,is_public_domain",
             "limit": 100,
         },
@@ -259,7 +260,17 @@ def fetch_artic_artwork(output_path: str, max_attempts: int = 15) -> str:
             continue
 
         image_url = f"https://www.artic.edu/iiif/2/{artwork['image_id']}/full/843,/0/default.jpg"
-        image_resp = requests.get(image_url, timeout=60)
+        image_resp = requests.get(
+            image_url,
+            headers={
+                "User-Agent": (
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                    "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+                ),
+                "Referer": "https://www.artic.edu/",
+            },
+            timeout=60,
+        )
         if image_resp.status_code != 200:
             continue
 
