@@ -3,7 +3,7 @@
 Upload an image to Cloudinary and publish it to Instagram via the Graph API.
 
 Usage:
-    python post_to_instagram.py [stability|met|nasa|artic]
+    python post_to_instagram.py [stability|met|nasa|artic|commons]
 
     If a source is omitted, one is chosen at random each run.
 
@@ -18,6 +18,7 @@ Required environment variables (set these before running, don't hardcode secrets
 """
 
 import os
+import re
 import sys
 import time
 import random
@@ -34,6 +35,10 @@ NASA_APOD_URL = "https://api.nasa.gov/planetary/apod"
 
 ARTIC_API_BASE = "https://api.artic.edu/api/v1/artworks"
 ARTIC_SEARCH_TERMS = ["abstract", "geometric abstraction", "cubism", "constructivism", "de stijl", "minimalism"]
+
+WIKIMEDIA_API_BASE = "https://commons.wikimedia.org/w/api.php"
+WIKIMEDIA_SEARCH_TERMS = ["fractal", "chaos theory", "geometric abstract", "strange attractor"]
+WIKIMEDIA_HEADERS = {"User-Agent": "instagram-auto-post/1.0 (https://github.com/milesy1/instagram-auto-post)"}
 
 SHAKESPEARE_QUOTES = [
     "We are such stuff as dreams are made on, and our little life is rounded with a sleep. -- The Tempest",
@@ -287,6 +292,108 @@ def fetch_artic_artwork(output_path: str, max_attempts: int = 100) -> str:
     raise RuntimeError(f"Could not find a usable public-domain image for query '{query}' after {max_attempts} attempts")
 
 
+def _is_usable_license(license_short_name: str) -> bool:
+    """Return True for public domain / CC0 / CC-BY / CC-BY-SA licenses; reject NC, ND, and anything unrecognized."""
+    normalized = license_short_name.strip().lower().replace(" ", "-")
+    if not normalized:
+        return False
+
+    tokens = normalized.split("-")
+    if "nc" in tokens or "nd" in tokens:
+        return False
+
+    if normalized.startswith("cc0") or normalized.startswith("public-domain") or normalized in ("pd", "pdm"):
+        return True
+
+    return normalized.startswith("cc-by")
+
+
+def _strip_html(text: str) -> str:
+    """Strip HTML tags from Wikimedia extmetadata fields (e.g. Artist, Credit)."""
+    return re.sub(r"<[^>]+>", "", text or "").strip()
+
+
+def fetch_wikimedia_image(output_path: str, max_attempts: int = 25) -> str:
+    """
+    Search Wikimedia Commons for a public-domain / CC-licensed image matching a
+    configurable search term, download it, and return an attribution string.
+    """
+    query = random.choice(WIKIMEDIA_SEARCH_TERMS)
+    search_resp = requests.get(
+        WIKIMEDIA_API_BASE,
+        params={
+            "action": "query",
+            "list": "search",
+            "srsearch": query,
+            "srnamespace": 6,
+            "srlimit": max_attempts,
+            "format": "json",
+        },
+        headers=WIKIMEDIA_HEADERS,
+        timeout=30,
+    )
+    search_resp.raise_for_status()
+    results = search_resp.json().get("query", {}).get("search") or []
+
+    if not results:
+        raise RuntimeError(f"No Wikimedia Commons results found for query '{query}'")
+
+    random.shuffle(results)
+
+    for result in results:
+        title = result.get("title")
+        if not title:
+            continue
+
+        info_resp = requests.get(
+            WIKIMEDIA_API_BASE,
+            params={
+                "action": "query",
+                "titles": title,
+                "prop": "imageinfo",
+                "iiprop": "url|mime|extmetadata",
+                "format": "json",
+            },
+            headers=WIKIMEDIA_HEADERS,
+            timeout=30,
+        )
+        if info_resp.status_code != 200:
+            continue
+
+        pages = info_resp.json().get("query", {}).get("pages") or {}
+        page = next(iter(pages.values()), {})
+        imageinfo = (page.get("imageinfo") or [None])[0]
+        if not imageinfo:
+            continue
+
+        if not imageinfo.get("mime", "").startswith("image/"):
+            continue
+
+        extmetadata = imageinfo.get("extmetadata") or {}
+        license_short = extmetadata.get("LicenseShortName", {}).get("value", "")
+        if not _is_usable_license(license_short):
+            continue
+
+        image_url = imageinfo.get("url")
+        if not image_url:
+            continue
+
+        image_resp = requests.get(image_url, headers=WIKIMEDIA_HEADERS, timeout=60)
+        if image_resp.status_code != 200:
+            continue
+
+        with open(output_path, "wb") as f:
+            f.write(image_resp.content)
+
+        clean_title = re.sub(r"^File:", "", title).rsplit(".", 1)[0]
+        artist = _strip_html(extmetadata.get("Artist", {}).get("value", "")) or "Unknown artist"
+        attribution = f"{clean_title} -- {artist}"
+        attribution += f"\nWikimedia Commons ({license_short or 'Public domain'})"
+        return attribution
+
+    raise RuntimeError(f"Could not find a usable licensed image for query '{query}' among {len(results)} results")
+
+
 def get_env(name: str) -> str:
     value = os.environ.get(name)
     if not value:
@@ -377,7 +484,7 @@ def publish_media(ig_user_id: str, access_token: str, creation_id: str) -> str:
 
 
 def main():
-    valid_sources = ("stability", "met", "nasa", "artic")
+    valid_sources = ("stability", "met", "nasa", "artic", "commons")
     if len(sys.argv) not in (1, 2) or (len(sys.argv) == 2 and sys.argv[1] not in valid_sources):
         print(f"Usage: python post_to_instagram.py [{'|'.join(valid_sources)}]", file=sys.stderr)
         print("  If omitted, a source is chosen at random.", file=sys.stderr)
@@ -422,6 +529,11 @@ def main():
         elif source == "artic":
             print("Fetching a public-domain artwork from the Art Institute of Chicago...")
             attribution = fetch_artic_artwork(image_path)
+            print(f"  -> {attribution}")
+
+        elif source == "commons":
+            print("Fetching a licensed image from Wikimedia Commons...")
+            attribution = fetch_wikimedia_image(image_path)
             print(f"  -> {attribution}")
 
         print("Selecting caption...")
