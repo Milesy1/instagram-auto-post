@@ -7,16 +7,6 @@ Usage:
 
     If a source is omitted, one is chosen at random each run.
 
-    stability -- an abstract/geometric/glitch prompt is generated via the
-                 Anthropic API and rendered via Stability AI.
-    met       -- a real public-domain abstract/geometric artwork is pulled
-                 from The Metropolitan Museum of Art's Open Access API,
-                 with artist/title attribution added to the caption.
-
-    Either way, the caption includes a random Shakespeare quote (Hamlet or
-    The Tempest), the image is uploaded to Cloudinary, and published to
-    Instagram.
-
 Required environment variables (set these before running, don't hardcode secrets):
     CLOUDINARY_CLOUD_NAME     e.g. "prwmjb95"
     CLOUDINARY_UPLOAD_PRESET  e.g. "Miles1" (must be an UNSIGNED preset)
@@ -24,17 +14,6 @@ Required environment variables (set these before running, don't hardcode secrets
     IG_ACCESS_TOKEN           Long-lived Instagram access token
     ANTHROPIC_API_KEY         Only required for the "stability" source
     STABILITY_API_KEY         Only required for the "stability" source
-
-    (The "met" source needs no API key at all.)
-
-Example (PowerShell):
-    $env:CLOUDINARY_CLOUD_NAME="prwmjb95"
-    $env:CLOUDINARY_UPLOAD_PRESET="Miles1"
-    $env:IG_USER_ID="27321930254083396"
-    $env:IG_ACCESS_TOKEN="IGAAO6P7..."
-    $env:ANTHROPIC_API_KEY="sk-ant-..."
-    $env:STABILITY_API_KEY="sk-..."
-    python post_to_instagram.py met
 """
 
 import os
@@ -56,11 +35,20 @@ SHAKESPEARE_QUOTES = [
     "O brave new world, that has such people in't! -- The Tempest",
     "Though the seas threaten, they are merciful. -- The Tempest",
     "What's past is prologue. -- The Tempest",
+    "Misery acquaints a man with strange bedfellows. -- The Tempest",
+    "We are three men of sin, whom Destiny hath cast upon this shore. -- The Tempest",
+    "This thing of darkness I acknowledge mine. -- The Tempest",
+    "Full fathom five thy father lies; of his bones are coral made. -- The Tempest",
     "To be, or not to be, that is the question. -- Hamlet",
     "There is nothing either good or bad, but thinking makes it so. -- Hamlet",
     "This above all: to thine own self be true. -- Hamlet",
     "The rest is silence. -- Hamlet",
     "There are more things in heaven and earth, Horatio, than are dreamt of in your philosophy. -- Hamlet",
+    "Though this be madness, yet there is method in't. -- Hamlet",
+    "Brevity is the soul of wit. -- Hamlet",
+    "The lady doth protest too much, methinks. -- Hamlet",
+    "What a piece of work is a man! -- Hamlet",
+    "Something is rotten in the state of Denmark. -- Hamlet",
 ]
 
 
@@ -85,9 +73,25 @@ def call_claude(api_key: str, prompt: str, max_tokens: int = 150) -> str:
     return "".join(block["text"] for block in result["content"] if block["type"] == "text").strip()
 
 
-def generate_caption() -> str:
-    """Pick a random Shakespeare quote from Hamlet or The Tempest."""
-    return random.choice(SHAKESPEARE_QUOTES)
+def generate_caption(state_dir: str = ".") -> str:
+    """
+    Pick a random Shakespeare quote from Hamlet or The Tempest, excluding
+    whichever quote was used last time (tracked via a small state file).
+    """
+    state_file = os.path.join(state_dir, "last_quote.txt")
+
+    last_quote = None
+    if os.path.isfile(state_file):
+        with open(state_file, "r", encoding="utf-8") as f:
+            last_quote = f.read().strip()
+
+    choices = [q for q in SHAKESPEARE_QUOTES if q != last_quote] or SHAKESPEARE_QUOTES
+    chosen = random.choice(choices)
+
+    with open(state_file, "w", encoding="utf-8") as f:
+        f.write(chosen)
+
+    return chosen
 
 
 def generate_image_prompt(api_key: str) -> str:
