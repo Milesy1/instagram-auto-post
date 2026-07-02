@@ -3,7 +3,7 @@
 Upload an image to Cloudinary and publish it to Instagram via the Graph API.
 
 Usage:
-    python post_to_instagram.py [stability|met]
+    python post_to_instagram.py [stability|met|nasa]
 
     If a source is omitted, one is chosen at random each run.
 
@@ -14,6 +14,7 @@ Required environment variables (set these before running, don't hardcode secrets
     IG_ACCESS_TOKEN           Long-lived Instagram access token
     ANTHROPIC_API_KEY         Only required for the "stability" source
     STABILITY_API_KEY         Only required for the "stability" source
+    NASA_API_KEY              Optional, only for the "nasa" source (defaults to DEMO_KEY)
 """
 
 import os
@@ -28,6 +29,8 @@ GRAPH_BASE = f"https://graph.instagram.com/{GRAPH_API_VERSION}"
 
 MET_API_BASE = "https://collectionapi.metmuseum.org/public/collection/v1"
 MET_SEARCH_TERMS = ["abstract", "geometric abstraction", "cubism", "constructivism", "de stijl"]
+
+NASA_APOD_URL = "https://api.nasa.gov/planetary/apod"
 
 SHAKESPEARE_QUOTES = [
     "We are such stuff as dreams are made on, and our little life is rounded with a sleep. -- The Tempest",
@@ -178,6 +181,53 @@ def fetch_met_artwork(output_path: str, max_attempts: int = 15) -> str:
     raise RuntimeError(f"Could not find a usable public-domain image for query '{query}' after {max_attempts} attempts")
 
 
+def fetch_nasa_apod(output_path: str, api_key: str, max_attempts: int = 10) -> str:
+    """
+    Fetch NASA's Astronomy Picture of the Day, walking backward from today if
+    a given day is a video (not an image) or otherwise unusable, and return
+    an attribution string.
+    """
+    import datetime
+
+    date = datetime.date.today()
+
+    for _ in range(max_attempts):
+        resp = requests.get(
+            NASA_APOD_URL,
+            params={"api_key": api_key, "date": date.isoformat()},
+            timeout=30,
+        )
+        if resp.status_code != 200:
+            date -= datetime.timedelta(days=1)
+            continue
+
+        data = resp.json()
+
+        if data.get("media_type") != "image":
+            date -= datetime.timedelta(days=1)
+            continue
+
+        image_url = data.get("hdurl") or data.get("url")
+        if not image_url:
+            date -= datetime.timedelta(days=1)
+            continue
+
+        image_resp = requests.get(image_url, timeout=60)
+        if image_resp.status_code != 200:
+            date -= datetime.timedelta(days=1)
+            continue
+
+        with open(output_path, "wb") as f:
+            f.write(image_resp.content)
+
+        title = data.get("title") or "Untitled"
+        credit = data.get("copyright", "").strip() or "NASA"
+        attribution = f"{title}, {date.isoformat()}\nImage credit: {credit} / NASA APOD"
+        return attribution
+
+    raise RuntimeError(f"Could not find a usable NASA APOD image after {max_attempts} attempts")
+
+
 def get_env(name: str) -> str:
     value = os.environ.get(name)
     if not value:
@@ -268,12 +318,13 @@ def publish_media(ig_user_id: str, access_token: str, creation_id: str) -> str:
 
 
 def main():
-    if len(sys.argv) not in (1, 2) or (len(sys.argv) == 2 and sys.argv[1] not in ("stability", "met")):
-        print("Usage: python post_to_instagram.py [stability|met]", file=sys.stderr)
+    valid_sources = ("stability", "met", "nasa")
+    if len(sys.argv) not in (1, 2) or (len(sys.argv) == 2 and sys.argv[1] not in valid_sources):
+        print(f"Usage: python post_to_instagram.py [{'|'.join(valid_sources)}]", file=sys.stderr)
         print("  If omitted, a source is chosen at random.", file=sys.stderr)
         sys.exit(1)
 
-    source = sys.argv[1] if len(sys.argv) == 2 else random.choice(["stability", "met"])
+    source = sys.argv[1] if len(sys.argv) == 2 else random.choice(valid_sources)
 
     cloud_name = get_env("CLOUDINARY_CLOUD_NAME")
     upload_preset = get_env("CLOUDINARY_UPLOAD_PRESET")
@@ -301,6 +352,12 @@ def main():
         elif source == "met":
             print("Fetching a public-domain artwork from the Met...")
             attribution = fetch_met_artwork(image_path)
+            print(f"  -> {attribution}")
+
+        elif source == "nasa":
+            nasa_key = os.environ.get("NASA_API_KEY", "DEMO_KEY")
+            print("Fetching NASA's Astronomy Picture of the Day...")
+            attribution = fetch_nasa_apod(image_path, nasa_key)
             print(f"  -> {attribution}")
 
         print("Selecting caption...")
