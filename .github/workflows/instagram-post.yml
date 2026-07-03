@@ -5,11 +5,11 @@ on:
     # Times are in UTC. These correspond to roughly 8am, 11am, 2pm, 5pm, 8pm
     # UK time during BST (UTC+1). During GMT (winter), actual UK time will be
     # one hour later than intended -- adjust the cron times below if that matters.
-    - cron: '0 7 * * *'
-    - cron: '0 10 * * *'
-    - cron: '0 13 * * *'
-    - cron: '0 16 * * *'
-    - cron: '0 19 * * *'
+    - cron: '7 7 * * *'
+    - cron: '13 10 * * *'
+    - cron: '22 13 * * *'
+    - cron: '38 16 * * *'
+    - cron: '51 19 * * *'
   workflow_dispatch: {}  # allows manual triggering from the Actions tab for testing
 
 jobs:
