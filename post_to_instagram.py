@@ -4,8 +4,14 @@ Upload an image to Cloudinary and publish it to Instagram via the Graph API.
 
 Usage:
     python post_to_instagram.py [stability|met|nasa|artic|commons]
+    python post_to_instagram.py --story
 
-    If a source is omitted, one is chosen at random each run.
+    If a source is omitted, one is chosen at random each run (feed posts only).
+
+    --story posts a single Instagram Story instead of a feed post: it picks
+    one random image from the source rotation, excluding any image already
+    used in that day's feed posts (tracked in used_images.log), and publishes
+    it with no caption (Stories don't support captions via the Graph API).
 
 Required environment variables (set these before running, don't hardcode secrets):
     CLOUDINARY_CLOUD_NAME     e.g. "prwmjb95"
@@ -23,6 +29,7 @@ import sys
 import time
 import random
 import tempfile
+import datetime
 import requests
 
 GRAPH_API_VERSION = "v21.0"
@@ -50,6 +57,9 @@ WIKIMEDIA_SEARCH_TERMS = [
 WIKIMEDIA_CATEGORY_BLOCKLIST = ("archaeolog", "pottery", "museum object", "ceramic", "ancient")
 WIKIMEDIA_PREFERRED_CATEGORIES = ("mathematical diagram", "fractal art", "computer-generated imagery", "abstract art")
 WIKIMEDIA_HEADERS = {"User-Agent": "instagram-auto-post/1.0 (https://github.com/milesy1/instagram-auto-post)"}
+
+VALID_SOURCES = ("stability", "met", "nasa", "artic", "commons")
+USED_IMAGES_LOG = "used_images.log"
 
 SHAKESPEARE_QUOTES = [
     "We are such stuff as dreams are made on, and our little life is rounded with a sleep. -- The Tempest",
@@ -138,6 +148,48 @@ def generate_caption(state_dir: str = ".") -> str:
     return chosen
 
 
+def load_used_images_today(state_dir: str = ".") -> set:
+    """
+    Return the set of source image URLs already posted today, based on the
+    used-images log that both the feed and Stories flows append to after
+    each successful post.
+    """
+    log_file = os.path.join(state_dir, USED_IMAGES_LOG)
+    today = datetime.date.today().isoformat()
+
+    used = set()
+    if os.path.isfile(log_file):
+        with open(log_file, "r", encoding="utf-8") as f:
+            for line in f:
+                parts = line.rstrip("\n").split("\t")
+                if len(parts) == 3 and parts[0] == today:
+                    used.add(parts[2])
+    return used
+
+
+def record_used_image(source: str, image_url: str, state_dir: str = ".") -> None:
+    """
+    Append a (date, source, image_url) record for today, pruning any records
+    from earlier days so the log doesn't grow unbounded. No-op if image_url
+    is falsy (e.g. the "stability" source, which generates rather than
+    drawing from a trackable pool).
+    """
+    log_file = os.path.join(state_dir, USED_IMAGES_LOG)
+    today = datetime.date.today().isoformat()
+
+    lines = []
+    if os.path.isfile(log_file):
+        with open(log_file, "r", encoding="utf-8") as f:
+            lines = [line.rstrip("\n") for line in f if line.strip()]
+
+    lines = [line for line in lines if line.split("\t", 1)[0] == today]
+    if image_url:
+        lines.append(f"{today}\t{source}\t{image_url}")
+
+    with open(log_file, "w", encoding="utf-8") as f:
+        f.write("\n".join(lines) + ("\n" if lines else ""))
+
+
 def generate_image_prompt(api_key: str) -> str:
     """Generate a Stability AI prompt in an abstract/geometric/glitch style."""
     return call_claude(
@@ -175,10 +227,10 @@ def generate_image_via_stability(prompt: str, api_key: str, output_path: str) ->
         f.write(resp.content)
 
 
-def fetch_met_artwork(output_path: str, max_attempts: int = 15) -> str:
+def fetch_met_artwork(output_path: str, max_attempts: int = 15, excluded_urls: frozenset = frozenset()) -> tuple:
     """
     Search the Met Museum's Open Access API for a public-domain abstract/geometric
-    artwork, download its image, and return an attribution string.
+    artwork, download its image, and return (attribution, image_url).
     """
     query = random.choice(MET_SEARCH_TERMS)
     search_resp = requests.get(
@@ -205,6 +257,9 @@ def fetch_met_artwork(output_path: str, max_attempts: int = 15) -> str:
         if not obj.get("isPublicDomain") or not image_url:
             continue
 
+        if image_url in excluded_urls:
+            continue
+
         image_resp = requests.get(image_url, timeout=60)
         if image_resp.status_code != 200:
             continue
@@ -217,19 +272,17 @@ def fetch_met_artwork(output_path: str, max_attempts: int = 15) -> str:
         date = obj.get("objectDate") or ""
         attribution = f"{title} -- {artist}" + (f", {date}" if date else "")
         attribution += "\nThe Metropolitan Museum of Art, Open Access (CC0)"
-        return attribution
+        return attribution, image_url
 
     raise RuntimeError(f"Could not find a usable public-domain image for query '{query}' after {max_attempts} attempts")
 
 
-def fetch_nasa_apod(output_path: str, api_key: str, max_attempts: int = 10) -> str:
+def fetch_nasa_apod(output_path: str, api_key: str, max_attempts: int = 10, excluded_urls: frozenset = frozenset()) -> tuple:
     """
     Fetch NASA's Astronomy Picture of the Day, walking backward from today if
     a given day is a video (not an image) or otherwise unusable, and return
-    an attribution string.
+    (attribution, image_url).
     """
-    import datetime
-
     date = datetime.date.today()
 
     for _ in range(max_attempts):
@@ -253,6 +306,10 @@ def fetch_nasa_apod(output_path: str, api_key: str, max_attempts: int = 10) -> s
             date -= datetime.timedelta(days=1)
             continue
 
+        if image_url in excluded_urls:
+            date -= datetime.timedelta(days=1)
+            continue
+
         image_resp = requests.get(image_url, timeout=60)
         if image_resp.status_code != 200:
             date -= datetime.timedelta(days=1)
@@ -264,15 +321,15 @@ def fetch_nasa_apod(output_path: str, api_key: str, max_attempts: int = 10) -> s
         title = data.get("title") or "Untitled"
         credit = data.get("copyright", "").strip() or "NASA"
         attribution = f"{title}, {date.isoformat()}\nImage credit: {credit} / NASA APOD"
-        return attribution
+        return attribution, image_url
 
     raise RuntimeError(f"Could not find a usable NASA APOD image after {max_attempts} attempts")
 
 
-def fetch_artic_artwork(output_path: str, max_attempts: int = 100) -> str:
+def fetch_artic_artwork(output_path: str, max_attempts: int = 100, excluded_urls: frozenset = frozenset()) -> tuple:
     """
     Search the Art Institute of Chicago's public API for a public-domain
-    abstract/geometric artwork, download its image, and return an attribution string.
+    abstract/geometric artwork, download its image, and return (attribution, image_url).
     """
     query = random.choice(ARTIC_SEARCH_TERMS)
     search_resp = requests.get(
@@ -298,6 +355,9 @@ def fetch_artic_artwork(output_path: str, max_attempts: int = 100) -> str:
             continue
 
         image_url = f"https://www.artic.edu/iiif/2/{artwork['image_id']}/full/843,/0/default.jpg"
+        if image_url in excluded_urls:
+            continue
+
         image_resp = requests.get(
             image_url,
             headers={
@@ -320,7 +380,7 @@ def fetch_artic_artwork(output_path: str, max_attempts: int = 100) -> str:
         date = artwork.get("date_display") or ""
         attribution = f"{title} -- {artist}" + (f", {date}" if date else "")
         attribution += "\nThe Art Institute of Chicago, Open Access (CC0)"
-        return attribution
+        return attribution, image_url
 
     raise RuntimeError(f"Could not find a usable public-domain image for query '{query}' after {max_attempts} attempts")
 
@@ -359,10 +419,10 @@ def _has_preferred_category(categories: list) -> bool:
     return any(keyword in cat for cat in categories for keyword in WIKIMEDIA_PREFERRED_CATEGORIES)
 
 
-def fetch_wikimedia_image(output_path: str, max_attempts: int = 25) -> str:
+def fetch_wikimedia_image(output_path: str, max_attempts: int = 25, excluded_urls: frozenset = frozenset()) -> tuple:
     """
     Search Wikimedia Commons for a public-domain / CC-licensed image matching a
-    configurable search term, download it, and return an attribution string.
+    configurable search term, download it, and return (attribution, image_url).
 
     Results are excluded if their Commons categories match WIKIMEDIA_CATEGORY_BLOCKLIST
     (e.g. archaeology/pottery/museum objects), and preferred if they match
@@ -433,6 +493,9 @@ def fetch_wikimedia_image(output_path: str, max_attempts: int = 25) -> str:
         if not image_url:
             continue
 
+        if image_url in excluded_urls:
+            continue
+
         categories = _category_names(page)
         if _has_blocklisted_category(categories):
             continue
@@ -455,7 +518,7 @@ def fetch_wikimedia_image(output_path: str, max_attempts: int = 25) -> str:
         artist = _strip_html(extmetadata.get("Artist", {}).get("value", "")) or "Unknown artist"
         attribution = f"{clean_title} -- {artist}"
         attribution += f"\nWikimedia Commons ({license_short or 'Public domain'})"
-        return attribution
+        return attribution, image_url
 
     raise RuntimeError(f"Could not find a usable licensed image for query '{query}' among {len(results)} results")
 
@@ -492,14 +555,23 @@ def upload_to_cloudinary(image_path: str, cloud_name: str, upload_preset: str) -
     return jpeg_url
 
 
-def create_media_container(ig_user_id: str, access_token: str, image_url: str, caption: str) -> str:
-    """Create an Instagram media container and return its creation_id."""
+def create_media_container(ig_user_id: str, access_token: str, image_url: str, caption: str = None, media_type: str = None) -> str:
+    """
+    Create an Instagram media container and return its creation_id.
+
+    caption is omitted for Stories (media_type="STORIES"), since the Graph API
+    doesn't support captions on that media type.
+    """
     url = f"{GRAPH_BASE}/{ig_user_id}/media"
     data = {
         "image_url": image_url,
-        "caption": caption,
         "access_token": access_token,
     }
+    if caption:
+        data["caption"] = caption
+    if media_type:
+        data["media_type"] = media_type
+
     resp = requests.post(url, data=data, timeout=60)
     resp.raise_for_status()
     result = resp.json()
@@ -550,13 +622,12 @@ def publish_media(ig_user_id: str, access_token: str, creation_id: str) -> str:
 
 
 def main():
-    valid_sources = ("stability", "met", "nasa", "artic", "commons")
-    if len(sys.argv) not in (1, 2) or (len(sys.argv) == 2 and sys.argv[1] not in valid_sources):
-        print(f"Usage: python post_to_instagram.py [{'|'.join(valid_sources)}]", file=sys.stderr)
+    if len(sys.argv) not in (1, 2) or (len(sys.argv) == 2 and sys.argv[1] not in VALID_SOURCES):
+        print(f"Usage: python post_to_instagram.py [{'|'.join(VALID_SOURCES)}]", file=sys.stderr)
         print("  If omitted, a source is chosen at random.", file=sys.stderr)
         sys.exit(1)
 
-    source = sys.argv[1] if len(sys.argv) == 2 else random.choice(valid_sources)
+    source = sys.argv[1] if len(sys.argv) == 2 else random.choice(VALID_SOURCES)
 
     cloud_name = get_env("CLOUDINARY_CLOUD_NAME")
     upload_preset = get_env("CLOUDINARY_UPLOAD_PRESET")
@@ -568,6 +639,7 @@ def main():
     with tempfile.TemporaryDirectory() as tmpdir:
         image_path = os.path.join(tmpdir, "image.jpg")
         attribution = None
+        image_source_url = None
 
         if source == "stability":
             anthropic_key = get_env("ANTHROPIC_API_KEY")
@@ -583,24 +655,26 @@ def main():
 
         elif source == "met":
             print("Fetching a public-domain artwork from the Met...")
-            attribution = fetch_met_artwork(image_path)
+            attribution, image_source_url = fetch_met_artwork(image_path)
             print(f"  -> {attribution}")
 
         elif source == "nasa":
             nasa_key = os.environ.get("NASA_API_KEY", "DEMO_KEY")
             print("Fetching NASA's Astronomy Picture of the Day...")
-            attribution = fetch_nasa_apod(image_path, nasa_key)
+            attribution, image_source_url = fetch_nasa_apod(image_path, nasa_key)
             print(f"  -> {attribution}")
 
         elif source == "artic":
             print("Fetching a public-domain artwork from the Art Institute of Chicago...")
-            attribution = fetch_artic_artwork(image_path)
+            attribution, image_source_url = fetch_artic_artwork(image_path)
             print(f"  -> {attribution}")
 
         elif source == "commons":
             print("Fetching a licensed image from Wikimedia Commons...")
-            attribution = fetch_wikimedia_image(image_path)
+            attribution, image_source_url = fetch_wikimedia_image(image_path)
             print(f"  -> {attribution}")
+
+        record_used_image(source, image_source_url)
 
         print("Selecting caption...")
         caption = generate_caption()
@@ -628,5 +702,90 @@ def main():
         print(f"  -> Published! Media ID: {media_id}")
 
 
+def post_story():
+    """
+    Post a single Instagram Story: pick one random image from the source
+    rotation, excluding any source image already used in today's feed posts,
+    and publish it with media_type=STORIES (no caption).
+
+    Tries sources in random order and falls through to the next one if a
+    source has nothing left to offer (e.g. its only candidate was already
+    used today), rather than failing the run outright.
+    """
+    cloud_name = get_env("CLOUDINARY_CLOUD_NAME")
+    upload_preset = get_env("CLOUDINARY_UPLOAD_PRESET")
+    ig_user_id = get_env("IG_USER_ID")
+    access_token = get_env("IG_ACCESS_TOKEN")
+
+    excluded_urls = load_used_images_today()
+    print(f"Excluding {len(excluded_urls)} image(s) already used in today's feed posts.")
+
+    sources = list(VALID_SOURCES)
+    random.shuffle(sources)
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        image_path = os.path.join(tmpdir, "image.jpg")
+        chosen_source = None
+        attribution = None
+        image_source_url = None
+        last_error = None
+
+        for source in sources:
+            print(f"Trying source: {source}")
+            attribution = None
+            image_source_url = None
+
+            try:
+                if source == "stability":
+                    anthropic_key = get_env("ANTHROPIC_API_KEY")
+                    stability_key = get_env("STABILITY_API_KEY")
+                    image_prompt = generate_image_prompt(anthropic_key)
+                    generate_image_via_stability(image_prompt, stability_key, image_path)
+                elif source == "met":
+                    attribution, image_source_url = fetch_met_artwork(image_path, excluded_urls=excluded_urls)
+                elif source == "nasa":
+                    nasa_key = os.environ.get("NASA_API_KEY", "DEMO_KEY")
+                    attribution, image_source_url = fetch_nasa_apod(image_path, nasa_key, excluded_urls=excluded_urls)
+                elif source == "artic":
+                    attribution, image_source_url = fetch_artic_artwork(image_path, excluded_urls=excluded_urls)
+                elif source == "commons":
+                    attribution, image_source_url = fetch_wikimedia_image(image_path, excluded_urls=excluded_urls)
+            except RuntimeError as exc:
+                print(f"  -> unavailable: {exc}")
+                last_error = exc
+                continue
+
+            chosen_source = source
+            break
+
+        if chosen_source is None:
+            raise RuntimeError(f"Could not find a usable image for today's Story: {last_error}")
+
+        print(f"Selected source: {chosen_source}")
+        if attribution:
+            print(f"  -> {attribution}")
+
+        record_used_image(chosen_source, image_source_url)
+
+        print("Uploading image to Cloudinary...")
+        image_url = upload_to_cloudinary(image_path, cloud_name, upload_preset)
+        print(f"  -> {image_url}")
+
+        print("Creating Instagram Story media container...")
+        creation_id = create_media_container(ig_user_id, access_token, image_url, media_type="STORIES")
+        print(f"  -> creation_id: {creation_id}")
+
+        print("Waiting for container to finish processing...")
+        wait_for_container_ready(creation_id, access_token)
+        print("  -> FINISHED")
+
+        print("Publishing Story to Instagram...")
+        media_id = publish_media(ig_user_id, access_token, creation_id)
+        print(f"  -> Published! Media ID: {media_id}")
+
+
 if __name__ == "__main__":
-    main()
+    if "--story" in sys.argv:
+        post_story()
+    else:
+        main()

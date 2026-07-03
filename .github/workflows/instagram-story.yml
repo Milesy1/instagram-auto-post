@@ -1,0 +1,49 @@
+name: Instagram Story Post
+
+on:
+  schedule:
+    # Fixed daily trigger after the last feed post slot (19:51 UTC), so that
+    # day's used_images.log already reflects all 5 feed posts before we pick
+    # a Story image. The random delay below jitters the actual posting time,
+    # same approach as the feed workflow.
+    - cron: '0 21 * * *'
+  workflow_dispatch: {}  # allows manual triggering from the Actions tab for testing
+
+jobs:
+  post-story:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Random delay (so posting time doesn't look robotically exact)
+        run: |
+          DELAY=$((RANDOM % 3000))
+          echo "Sleeping for $DELAY seconds"
+          sleep $DELAY
+
+      - name: Post Instagram Story
+        env:
+          CLOUDINARY_CLOUD_NAME: ${{ secrets.CLOUDINARY_CLOUD_NAME }}
+          CLOUDINARY_UPLOAD_PRESET: ${{ secrets.CLOUDINARY_UPLOAD_PRESET }}
+          IG_USER_ID: ${{ secrets.IG_USER_ID }}
+          IG_ACCESS_TOKEN: ${{ secrets.IG_ACCESS_TOKEN }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          STABILITY_API_KEY: ${{ secrets.STABILITY_API_KEY }}
+        run: python post_to_instagram.py --story
+
+      - name: Commit updated image-tracking state
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add used_images.log
+          git diff --staged --quiet || git commit -m "Update used-images state [skip ci]"
+          git push
