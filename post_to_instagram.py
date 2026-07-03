@@ -53,9 +53,28 @@ WIKIMEDIA_SEARCH_TERMS = [
     "topology diagram",
     "strange attractor",
     "fractal art",
+    "Lorenz attractor",
+    "Mandelbrot set",
+    "Julia set fractal",
+    "bifurcation diagram",
+    "cellular automaton",
+    "phase portrait",
+    "phase space diagram",
+    "chaos theory diagram",
+    "dynamical system",
+    "fractal flame",
 ]
 WIKIMEDIA_CATEGORY_BLOCKLIST = ("archaeolog", "pottery", "museum object", "ceramic", "ancient")
-WIKIMEDIA_PREFERRED_CATEGORIES = ("mathematical diagram", "fractal art", "computer-generated imagery", "abstract art")
+WIKIMEDIA_PREFERRED_CATEGORIES = (
+    "mathematical diagram",
+    "fractal art",
+    "computer-generated imagery",
+    "abstract art",
+    "chaos theory",
+    "dynamical systems",
+    "attractors",
+    "fractals",
+)
 WIKIMEDIA_HEADERS = {"User-Agent": "instagram-auto-post/1.0 (https://github.com/milesy1/instagram-auto-post)"}
 
 VALID_SOURCES = ("stability", "met", "nasa", "artic", "commons")
