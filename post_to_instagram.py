@@ -582,7 +582,13 @@ def _parse_json_response(resp, error_prefix: str) -> dict:
 
 
 def upload_to_cloudinary(image_path: str, cloud_name: str, upload_preset: str) -> str:
-    """Upload image to Cloudinary (unsigned) and return a public JPEG URL."""
+    """
+    Upload image to Cloudinary (unsigned) and return a public JPEG URL, padded
+    to a 4:5 aspect ratio (letterboxed in black rather than cropped, so no
+    content is lost). Instagram rejects images outside roughly 4:5-1.91:1,
+    and source images -- NASA APOD in particular, which is often panoramic --
+    can fall outside that range.
+    """
     url = f"https://api.cloudinary.com/v1_1/{cloud_name}/image/upload"
 
     with open(image_path, "rb") as f:
@@ -593,11 +599,11 @@ def upload_to_cloudinary(image_path: str, cloud_name: str, upload_preset: str) -
     result = _parse_json_response(resp, "Cloudinary upload failed")
     secure_url = result["secure_url"]
 
-    # Force JPEG delivery regardless of source format (Instagram requires JPEG).
-    # Insert the f_jpg transformation right after "/upload/".
-    jpeg_url = secure_url.replace("/upload/", "/upload/f_jpg/", 1)
+    # Force JPEG delivery and pad to a safe aspect ratio in one transformation,
+    # inserted right after "/upload/".
+    transformed_url = secure_url.replace("/upload/", "/upload/f_jpg,c_pad,ar_4:5,b_black/", 1)
 
-    return jpeg_url
+    return transformed_url
 
 
 def create_media_container(ig_user_id: str, access_token: str, image_url: str, caption: str = None, media_type: str = None) -> str:
@@ -717,64 +723,58 @@ def main():
     ig_user_id = get_env("IG_USER_ID")
     access_token = get_env("IG_ACCESS_TOKEN")
 
+    print("Selecting caption...")
+    quote = generate_caption()
+    print(f"  -> {quote}")
+
+    # An explicitly requested source (e.g. a manual test run) is tried once and
+    # fails hard with no fallback. Otherwise (the normal scheduled-run case),
+    # try the rotation in random order and fall through to the next one if a
+    # source has nothing usable, or if Cloudinary/Instagram rejects the
+    # fetched image for any reason (e.g. an unsupported aspect ratio), rather
+    # than failing the run outright.
+    sources = [explicit_source] if explicit_source else random.sample(VALID_SOURCES, len(VALID_SOURCES))
+    last_error = None
+
     with tempfile.TemporaryDirectory() as tmpdir:
         image_path = os.path.join(tmpdir, "image.jpg")
 
-        if explicit_source:
-            print(f"Source: {explicit_source}")
-            source = explicit_source
-            attribution, image_source_url = _fetch_for_source(source, image_path)
-        else:
-            # No source pinned (the normal scheduled-run case): try the rotation
-            # in random order and fall through to the next one instead of
-            # failing the run outright if a source has nothing usable right now.
-            sources = list(VALID_SOURCES)
-            random.shuffle(sources)
-            source = None
-            attribution = None
-            image_source_url = None
-            last_error = None
+        for source in sources:
+            print(f"Source: {source}")
+            try:
+                attribution, image_source_url = _fetch_for_source(source, image_path)
 
-            for candidate in sources:
-                print(f"Source: {candidate}")
-                try:
-                    attribution, image_source_url = _fetch_for_source(candidate, image_path)
-                except RuntimeError as exc:
-                    print(f"  -> unavailable: {exc}")
-                    last_error = exc
-                    continue
-                source = candidate
-                break
+                caption = quote
+                if attribution:
+                    caption = f"{caption}\n\n{attribution}"
+                caption = f"{caption}\n\nUploaded via Miles' Graph API"
 
-            if source is None:
-                raise RuntimeError(f"Could not find a usable image from any source: {last_error}")
+                print("Uploading image to Cloudinary...")
+                image_url = upload_to_cloudinary(image_path, cloud_name, upload_preset)
+                print(f"  -> {image_url}")
 
-        record_used_image(source, image_source_url)
+                print("Creating Instagram media container...")
+                creation_id = create_media_container(ig_user_id, access_token, image_url, caption)
+                print(f"  -> creation_id: {creation_id}")
 
-        print("Selecting caption...")
-        caption = generate_caption()
-        print(f"  -> {caption}")
+                print("Waiting for container to finish processing...")
+                wait_for_container_ready(creation_id, access_token)
+                print("  -> FINISHED")
 
-        if attribution:
-            caption = f"{caption}\n\n{attribution}"
+                print("Publishing to Instagram...")
+                media_id = publish_media(ig_user_id, access_token, creation_id)
+                print(f"  -> Published! Media ID: {media_id}")
+            except RuntimeError as exc:
+                print(f"  -> unavailable: {exc}")
+                last_error = exc
+                if explicit_source:
+                    raise
+                continue
 
-        caption = f"{caption}\n\nUploaded via Miles' Graph API"
+            record_used_image(source, image_source_url)
+            return
 
-        print("Uploading image to Cloudinary...")
-        image_url = upload_to_cloudinary(image_path, cloud_name, upload_preset)
-        print(f"  -> {image_url}")
-
-        print("Creating Instagram media container...")
-        creation_id = create_media_container(ig_user_id, access_token, image_url, caption)
-        print(f"  -> creation_id: {creation_id}")
-
-        print("Waiting for container to finish processing...")
-        wait_for_container_ready(creation_id, access_token)
-        print("  -> FINISHED")
-
-        print("Publishing to Instagram...")
-        media_id = publish_media(ig_user_id, access_token, creation_id)
-        print(f"  -> Published! Media ID: {media_id}")
+    raise RuntimeError(f"Could not publish a post from any source: {last_error}")
 
 
 def post_story():
@@ -784,8 +784,9 @@ def post_story():
     and publish it with media_type=STORIES (no caption).
 
     Tries sources in random order and falls through to the next one if a
-    source has nothing left to offer (e.g. its only candidate was already
-    used today), rather than failing the run outright.
+    source has nothing to offer, or if Cloudinary/Instagram rejects the
+    fetched image for any reason (e.g. an unsupported aspect ratio), rather
+    than failing the run outright.
     """
     cloud_name = get_env("CLOUDINARY_CLOUD_NAME")
     upload_preset = get_env("CLOUDINARY_UPLOAD_PRESET")
@@ -795,50 +796,41 @@ def post_story():
     excluded_urls = load_used_images_today()
     print(f"Excluding {len(excluded_urls)} image(s) already used in today's feed posts.")
 
-    sources = list(VALID_SOURCES)
-    random.shuffle(sources)
+    sources = random.sample(VALID_SOURCES, len(VALID_SOURCES))
+    last_error = None
 
     with tempfile.TemporaryDirectory() as tmpdir:
         image_path = os.path.join(tmpdir, "image.jpg")
-        chosen_source = None
-        attribution = None
-        image_source_url = None
-        last_error = None
 
         for source in sources:
             print(f"Trying source: {source}")
             try:
                 attribution, image_source_url = _fetch_for_source(source, image_path, excluded_urls=excluded_urls)
+
+                print("Uploading image to Cloudinary...")
+                image_url = upload_to_cloudinary(image_path, cloud_name, upload_preset)
+                print(f"  -> {image_url}")
+
+                print("Creating Instagram Story media container...")
+                creation_id = create_media_container(ig_user_id, access_token, image_url, media_type="STORIES")
+                print(f"  -> creation_id: {creation_id}")
+
+                print("Waiting for container to finish processing...")
+                wait_for_container_ready(creation_id, access_token)
+                print("  -> FINISHED")
+
+                print("Publishing Story to Instagram...")
+                media_id = publish_media(ig_user_id, access_token, creation_id)
+                print(f"  -> Published! Media ID: {media_id}")
             except RuntimeError as exc:
                 print(f"  -> unavailable: {exc}")
                 last_error = exc
                 continue
 
-            chosen_source = source
-            break
+            record_used_image(source, image_source_url)
+            return
 
-        if chosen_source is None:
-            raise RuntimeError(f"Could not find a usable image for today's Story: {last_error}")
-
-        print(f"Selected source: {chosen_source}")
-
-        record_used_image(chosen_source, image_source_url)
-
-        print("Uploading image to Cloudinary...")
-        image_url = upload_to_cloudinary(image_path, cloud_name, upload_preset)
-        print(f"  -> {image_url}")
-
-        print("Creating Instagram Story media container...")
-        creation_id = create_media_container(ig_user_id, access_token, image_url, media_type="STORIES")
-        print(f"  -> creation_id: {creation_id}")
-
-        print("Waiting for container to finish processing...")
-        wait_for_container_ready(creation_id, access_token)
-        print("  -> FINISHED")
-
-        print("Publishing Story to Instagram...")
-        media_id = publish_media(ig_user_id, access_token, creation_id)
-        print(f"  -> Published! Media ID: {media_id}")
+    raise RuntimeError(f"Could not publish a Story from any source: {last_error}")
 
 
 if __name__ == "__main__":
