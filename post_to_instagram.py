@@ -369,12 +369,18 @@ def fetch_artic_artwork(output_path: str, max_attempts: int = 100, excluded_urls
 
     random.shuffle(results)
 
+    skipped_no_image = 0
+    skipped_excluded = 0
+    download_failures = {}
+
     for artwork in results[:max_attempts]:
         if not artwork.get("is_public_domain") or not artwork.get("image_id"):
+            skipped_no_image += 1
             continue
 
         image_url = f"https://www.artic.edu/iiif/2/{artwork['image_id']}/full/843,/0/default.jpg"
         if image_url in excluded_urls:
+            skipped_excluded += 1
             continue
 
         image_resp = requests.get(
@@ -389,6 +395,7 @@ def fetch_artic_artwork(output_path: str, max_attempts: int = 100, excluded_urls
             timeout=60,
         )
         if image_resp.status_code != 200:
+            download_failures[image_resp.status_code] = download_failures.get(image_resp.status_code, 0) + 1
             continue
 
         with open(output_path, "wb") as f:
@@ -401,7 +408,11 @@ def fetch_artic_artwork(output_path: str, max_attempts: int = 100, excluded_urls
         attribution += "\nThe Art Institute of Chicago, Open Access (CC0)"
         return attribution, image_url
 
-    raise RuntimeError(f"Could not find a usable public-domain image for query '{query}' after {max_attempts} attempts")
+    raise RuntimeError(
+        f"Could not find a usable public-domain image for query '{query}' after {max_attempts} attempts "
+        f"(not public domain/no image_id: {skipped_no_image}, already excluded: {skipped_excluded}, "
+        f"download failures by status code: {download_failures or 'none'})"
+    )
 
 
 def _is_usable_license(license_short_name: str) -> bool:
@@ -550,6 +561,26 @@ def get_env(name: str) -> str:
     return value
 
 
+def _parse_json_response(resp, error_prefix: str) -> dict:
+    """
+    Parse a response body as JSON, preferring the API's own structured error
+    message (an "error" key) over a bare HTTP status. resp.raise_for_status()
+    alone would raise on a 4xx/5xx before this code ever reads the body,
+    hiding the actual reason the API gave (e.g. bad image dimensions).
+    """
+    try:
+        result = resp.json()
+    except ValueError:
+        resp.raise_for_status()
+        raise
+
+    if "error" in result:
+        raise RuntimeError(f"{error_prefix}: {result['error']}")
+
+    resp.raise_for_status()
+    return result
+
+
 def upload_to_cloudinary(image_path: str, cloud_name: str, upload_preset: str) -> str:
     """Upload image to Cloudinary (unsigned) and return a public JPEG URL."""
     url = f"https://api.cloudinary.com/v1_1/{cloud_name}/image/upload"
@@ -559,12 +590,7 @@ def upload_to_cloudinary(image_path: str, cloud_name: str, upload_preset: str) -
         data = {"upload_preset": upload_preset}
         resp = requests.post(url, files=files, data=data, timeout=60)
 
-    resp.raise_for_status()
-    result = resp.json()
-
-    if "error" in result:
-        raise RuntimeError(f"Cloudinary upload failed: {result['error']}")
-
+    result = _parse_json_response(resp, "Cloudinary upload failed")
     secure_url = result["secure_url"]
 
     # Force JPEG delivery regardless of source format (Instagram requires JPEG).
@@ -592,12 +618,7 @@ def create_media_container(ig_user_id: str, access_token: str, image_url: str, c
         data["media_type"] = media_type
 
     resp = requests.post(url, data=data, timeout=60)
-    resp.raise_for_status()
-    result = resp.json()
-
-    if "error" in result:
-        raise RuntimeError(f"Container creation failed: {result['error']}")
-
+    result = _parse_json_response(resp, "Container creation failed")
     return result["id"]
 
 
@@ -631,13 +652,56 @@ def publish_media(ig_user_id: str, access_token: str, creation_id: str) -> str:
         "access_token": access_token,
     }
     resp = requests.post(url, data=data, timeout=60)
-    resp.raise_for_status()
-    result = resp.json()
-
-    if "error" in result:
-        raise RuntimeError(f"Publish failed: {result['error']}")
-
+    result = _parse_json_response(resp, "Publish failed")
     return result["id"]
+
+
+def _fetch_for_source(source: str, image_path: str, excluded_urls: frozenset = frozenset()) -> tuple:
+    """
+    Fetch/generate an image for a single source, returning (attribution, image_source_url).
+    Both are None for "stability" (generated fresh, not drawn from a trackable pool).
+    Raises RuntimeError if the source has no usable image available (e.g. everything
+    it found is already in excluded_urls).
+    """
+    if source == "stability":
+        anthropic_key = get_env("ANTHROPIC_API_KEY")
+        stability_key = get_env("STABILITY_API_KEY")
+
+        print("Generating image prompt...")
+        image_prompt = generate_image_prompt(anthropic_key)
+        print(f"  -> {image_prompt}")
+
+        print("Generating image via Stability AI...")
+        generate_image_via_stability(image_prompt, stability_key, image_path)
+        print(f"  -> saved to {image_path}")
+        return None, None
+
+    if source == "met":
+        print("Fetching a public-domain artwork from the Met...")
+        attribution, image_source_url = fetch_met_artwork(image_path, excluded_urls=excluded_urls)
+        print(f"  -> {attribution}")
+        return attribution, image_source_url
+
+    if source == "nasa":
+        nasa_key = os.environ.get("NASA_API_KEY", "DEMO_KEY")
+        print("Fetching NASA's Astronomy Picture of the Day...")
+        attribution, image_source_url = fetch_nasa_apod(image_path, nasa_key, excluded_urls=excluded_urls)
+        print(f"  -> {attribution}")
+        return attribution, image_source_url
+
+    if source == "artic":
+        print("Fetching a public-domain artwork from the Art Institute of Chicago...")
+        attribution, image_source_url = fetch_artic_artwork(image_path, excluded_urls=excluded_urls)
+        print(f"  -> {attribution}")
+        return attribution, image_source_url
+
+    if source == "commons":
+        print("Fetching a licensed image from Wikimedia Commons...")
+        attribution, image_source_url = fetch_wikimedia_image(image_path, excluded_urls=excluded_urls)
+        print(f"  -> {attribution}")
+        return attribution, image_source_url
+
+    raise ValueError(f"Unknown source: {source}")
 
 
 def main():
@@ -646,52 +710,44 @@ def main():
         print("  If omitted, a source is chosen at random.", file=sys.stderr)
         sys.exit(1)
 
-    source = sys.argv[1] if len(sys.argv) == 2 else random.choice(VALID_SOURCES)
+    explicit_source = sys.argv[1] if len(sys.argv) == 2 else None
 
     cloud_name = get_env("CLOUDINARY_CLOUD_NAME")
     upload_preset = get_env("CLOUDINARY_UPLOAD_PRESET")
     ig_user_id = get_env("IG_USER_ID")
     access_token = get_env("IG_ACCESS_TOKEN")
 
-    print(f"Source: {source}")
-
     with tempfile.TemporaryDirectory() as tmpdir:
         image_path = os.path.join(tmpdir, "image.jpg")
-        attribution = None
-        image_source_url = None
 
-        if source == "stability":
-            anthropic_key = get_env("ANTHROPIC_API_KEY")
-            stability_key = get_env("STABILITY_API_KEY")
+        if explicit_source:
+            print(f"Source: {explicit_source}")
+            source = explicit_source
+            attribution, image_source_url = _fetch_for_source(source, image_path)
+        else:
+            # No source pinned (the normal scheduled-run case): try the rotation
+            # in random order and fall through to the next one instead of
+            # failing the run outright if a source has nothing usable right now.
+            sources = list(VALID_SOURCES)
+            random.shuffle(sources)
+            source = None
+            attribution = None
+            image_source_url = None
+            last_error = None
 
-            print("Generating image prompt...")
-            image_prompt = generate_image_prompt(anthropic_key)
-            print(f"  -> {image_prompt}")
+            for candidate in sources:
+                print(f"Source: {candidate}")
+                try:
+                    attribution, image_source_url = _fetch_for_source(candidate, image_path)
+                except RuntimeError as exc:
+                    print(f"  -> unavailable: {exc}")
+                    last_error = exc
+                    continue
+                source = candidate
+                break
 
-            print("Generating image via Stability AI...")
-            generate_image_via_stability(image_prompt, stability_key, image_path)
-            print(f"  -> saved to {image_path}")
-
-        elif source == "met":
-            print("Fetching a public-domain artwork from the Met...")
-            attribution, image_source_url = fetch_met_artwork(image_path)
-            print(f"  -> {attribution}")
-
-        elif source == "nasa":
-            nasa_key = os.environ.get("NASA_API_KEY", "DEMO_KEY")
-            print("Fetching NASA's Astronomy Picture of the Day...")
-            attribution, image_source_url = fetch_nasa_apod(image_path, nasa_key)
-            print(f"  -> {attribution}")
-
-        elif source == "artic":
-            print("Fetching a public-domain artwork from the Art Institute of Chicago...")
-            attribution, image_source_url = fetch_artic_artwork(image_path)
-            print(f"  -> {attribution}")
-
-        elif source == "commons":
-            print("Fetching a licensed image from Wikimedia Commons...")
-            attribution, image_source_url = fetch_wikimedia_image(image_path)
-            print(f"  -> {attribution}")
+            if source is None:
+                raise RuntimeError(f"Could not find a usable image from any source: {last_error}")
 
         record_used_image(source, image_source_url)
 
@@ -751,24 +807,8 @@ def post_story():
 
         for source in sources:
             print(f"Trying source: {source}")
-            attribution = None
-            image_source_url = None
-
             try:
-                if source == "stability":
-                    anthropic_key = get_env("ANTHROPIC_API_KEY")
-                    stability_key = get_env("STABILITY_API_KEY")
-                    image_prompt = generate_image_prompt(anthropic_key)
-                    generate_image_via_stability(image_prompt, stability_key, image_path)
-                elif source == "met":
-                    attribution, image_source_url = fetch_met_artwork(image_path, excluded_urls=excluded_urls)
-                elif source == "nasa":
-                    nasa_key = os.environ.get("NASA_API_KEY", "DEMO_KEY")
-                    attribution, image_source_url = fetch_nasa_apod(image_path, nasa_key, excluded_urls=excluded_urls)
-                elif source == "artic":
-                    attribution, image_source_url = fetch_artic_artwork(image_path, excluded_urls=excluded_urls)
-                elif source == "commons":
-                    attribution, image_source_url = fetch_wikimedia_image(image_path, excluded_urls=excluded_urls)
+                attribution, image_source_url = _fetch_for_source(source, image_path, excluded_urls=excluded_urls)
             except RuntimeError as exc:
                 print(f"  -> unavailable: {exc}")
                 last_error = exc
@@ -781,8 +821,6 @@ def post_story():
             raise RuntimeError(f"Could not find a usable image for today's Story: {last_error}")
 
         print(f"Selected source: {chosen_source}")
-        if attribution:
-            print(f"  -> {attribution}")
 
         record_used_image(chosen_source, image_source_url)
 
