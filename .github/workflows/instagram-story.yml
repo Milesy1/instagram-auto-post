@@ -2,11 +2,12 @@ name: Instagram Story Post
 
 on:
   schedule:
-    # Fixed daily trigger after the last feed post slot (19:51 UTC), so that
-    # day's used_images.log already reflects all 5 feed posts before we pick
-    # a Story image. The random delay below jitters the actual posting time,
-    # same approach as the feed workflow.
-    - cron: '0 21 * * *'
+    # Runs every 15 minutes; the script decides whether STORY_POST_INTERVAL
+    # has elapsed since the last successful Story post and exits immediately
+    # if not. Same rationale as instagram-post.yml -- a frequent tick with an
+    # internal due-check is more reliable than a single fixed daily cron time,
+    # since GitHub Actions occasionally delays or drops exact-time triggers.
+    - cron: '*/15 * * * *'
   workflow_dispatch: {}  # allows manual triggering from the Actions tab for testing
 
 jobs:
@@ -24,13 +25,7 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
-      - name: Random delay (so posting time doesn't look robotically exact)
-        run: |
-          DELAY=$((RANDOM % 3000))
-          echo "Sleeping for $DELAY seconds"
-          sleep $DELAY
-
-      - name: Post Instagram Story
+      - name: Check due / post Instagram Story
         env:
           CLOUDINARY_CLOUD_NAME: ${{ secrets.CLOUDINARY_CLOUD_NAME }}
           CLOUDINARY_UPLOAD_PRESET: ${{ secrets.CLOUDINARY_UPLOAD_PRESET }}
@@ -38,12 +33,12 @@ jobs:
           IG_ACCESS_TOKEN: ${{ secrets.IG_ACCESS_TOKEN }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           STABILITY_API_KEY: ${{ secrets.STABILITY_API_KEY }}
-        run: python post_to_instagram.py --story
+        run: python post_to_instagram.py --auto-story
 
-      - name: Commit updated image-tracking state
+      - name: Commit updated state (only if something was actually posted)
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add used_images.log
+          git add used_images.log last_story_post.txt
           git diff --staged --quiet || git commit -m "Update used-images state [skip ci]"
           git push

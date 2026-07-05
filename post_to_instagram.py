@@ -5,6 +5,8 @@ Upload an image to Cloudinary and publish it to Instagram via the Graph API.
 Usage:
     python post_to_instagram.py [stability|met|nasa|artic|commons]
     python post_to_instagram.py --story
+    python post_to_instagram.py --auto
+    python post_to_instagram.py --auto-story
 
     If a source is omitted, one is chosen at random each run (feed posts only).
 
@@ -13,6 +15,12 @@ Usage:
     used in that day's feed posts (tracked in used_images.log), and publishes
     it with no caption (Stories don't support captions via the Graph API).
 
+    --auto / --auto-story are used by the scheduled GitHub Actions workflows,
+    which run every 15 minutes rather than at 5 fixed times a day. Each
+    invocation checks how long it's been since the last successful post and
+    only actually posts once enough time has elapsed, exiting immediately
+    otherwise -- so a dropped/delayed cron tick doesn't cost that slot for
+    the whole day.
 Required environment variables (set these before running, don't hardcode secrets):
     CLOUDINARY_CLOUD_NAME     e.g. "prwmjb95"
     CLOUDINARY_UPLOAD_PRESET  e.g. "Miles1" (must be an UNSIGNED preset)
@@ -145,6 +153,45 @@ def call_claude(api_key: str, prompt: str, max_tokens: int = 150) -> str:
     result = resp.json()
     return "".join(block["text"] for block in result["content"] if block["type"] == "text").strip()
 
+
+FEED_POST_INTERVAL = datetime.timedelta(hours=4, minutes=40)
+STORY_POST_INTERVAL = datetime.timedelta(hours=20)
+LAST_FEED_POST_FILE = "last_feed_post.txt"
+LAST_STORY_POST_FILE = "last_story_post.txt"
+
+
+def _read_last_run_time(state_file: str):
+    """Return the UTC datetime stored in state_file, or None if missing/unreadable."""
+    if not os.path.isfile(state_file):
+        return None
+    try:
+        with open(state_file, "r", encoding="utf-8") as f:
+            value = datetime.datetime.fromisoformat(f.read().strip())
+    except (ValueError, OSError):
+        return None
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=datetime.timezone.utc)
+    return value
+
+
+def _write_last_run_time(state_file: str) -> None:
+    with open(state_file, "w", encoding="utf-8") as f:
+        f.write(datetime.datetime.now(datetime.timezone.utc).isoformat())
+
+
+def _is_due(state_file: str, interval: datetime.timedelta) -> bool:
+    """
+    True if state_file has no recorded timestamp yet, or enough time has
+    elapsed since the last one. Used to make posting frequency resilient to
+    GitHub Actions occasionally dropping an exact-time cron trigger: rather
+    than each of 5 fixed daily cron times being a single point of failure,
+    a lightweight check runs every 15 minutes and self-corrects by posting
+    as soon as the interval has elapsed, whenever that turns out to be.
+    """
+    last = _read_last_run_time(state_file)
+    if last is None:
+        return True
+    return (datetime.datetime.now(datetime.timezone.utc) - last) >= interval
 
 def generate_caption(state_dir: str = ".") -> str:
     """
@@ -710,14 +757,7 @@ def _fetch_for_source(source: str, image_path: str, excluded_urls: frozenset = f
     raise ValueError(f"Unknown source: {source}")
 
 
-def main():
-    if len(sys.argv) not in (1, 2) or (len(sys.argv) == 2 and sys.argv[1] not in VALID_SOURCES):
-        print(f"Usage: python post_to_instagram.py [{'|'.join(VALID_SOURCES)}]", file=sys.stderr)
-        print("  If omitted, a source is chosen at random.", file=sys.stderr)
-        sys.exit(1)
-
-    explicit_source = sys.argv[1] if len(sys.argv) == 2 else None
-
+def run_feed_post(explicit_source: str = None):
     cloud_name = get_env("CLOUDINARY_CLOUD_NAME")
     upload_preset = get_env("CLOUDINARY_UPLOAD_PRESET")
     ig_user_id = get_env("IG_USER_ID")
@@ -833,8 +873,64 @@ def post_story():
     raise RuntimeError(f"Could not publish a Story from any source: {last_error}")
 
 
-if __name__ == "__main__":
-    if "--story" in sys.argv:
+def auto_feed():
+    """
+    Called every 15 minutes by the scheduled workflow. Posts a feed image only
+    if FEED_POST_INTERVAL has elapsed since the last successful post, so a
+    dropped/delayed GitHub Actions cron tick doesn't cost that slot for the
+    whole day -- the next tick that fires will simply catch up.
+    """
+    if not _is_due(LAST_FEED_POST_FILE, FEED_POST_INTERVAL):
+        last = _read_last_run_time(LAST_FEED_POST_FILE)
+        remaining = FEED_POST_INTERVAL - (datetime.datetime.now(datetime.timezone.utc) - last)
+        print(f"Not due yet -- last feed post was {last.isoformat()}, next one in ~{remaining}.")
+        return
+
+    run_feed_post()
+    _write_last_run_time(LAST_FEED_POST_FILE)
+
+
+def auto_story():
+    """Same due-check pattern as auto_feed(), but for the once-daily Story post."""
+    if not _is_due(LAST_STORY_POST_FILE, STORY_POST_INTERVAL):
+        last = _read_last_run_time(LAST_STORY_POST_FILE)
+        remaining = STORY_POST_INTERVAL - (datetime.datetime.now(datetime.timezone.utc) - last)
+        print(f"Not due yet -- last Story post was {last.isoformat()}, next one in ~{remaining}.")
+        return
+
+    post_story()
+    _write_last_run_time(LAST_STORY_POST_FILE)
+
+
+def main():
+    """
+    CLI entry point.
+
+        python post_to_instagram.py                 post a feed image now (random source)
+        python post_to_instagram.py <source>         post a feed image now from a specific source
+        python post_to_instagram.py --story           post a Story now (random source)
+        python post_to_instagram.py --auto             post a feed image only if it's due (used by cron)
+        python post_to_instagram.py --auto-story       post a Story only if it's due (used by cron)
+    """
+    args = sys.argv[1:]
+
+    if args == ["--auto"]:
+        auto_feed()
+    elif args == ["--auto-story"]:
+        auto_story()
+    elif args == ["--story"]:
         post_story()
+    elif len(args) == 0:
+        run_feed_post()
+    elif len(args) == 1 and args[0] in VALID_SOURCES:
+        run_feed_post(explicit_source=args[0])
     else:
-        main()
+        print(
+            f"Usage: python post_to_instagram.py [{'|'.join(VALID_SOURCES)}|--story|--auto|--auto-story]",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()
