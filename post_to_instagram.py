@@ -88,48 +88,26 @@ WIKIMEDIA_HEADERS = {"User-Agent": "instagram-auto-post/1.0 (https://github.com/
 VALID_SOURCES = ("stability", "met", "nasa", "artic", "commons")
 USED_IMAGES_LOG = "used_images.log"
 
-SHAKESPEARE_QUOTES = [
-    "We are such stuff as dreams are made on, and our little life is rounded with a sleep. -- The Tempest",
-    "Hell is empty, and all the devils are here. -- The Tempest",
-    "O brave new world, that has such people in't! -- The Tempest",
-    "Though the seas threaten, they are merciful. -- The Tempest",
-    "What's past is prologue. -- The Tempest",
-    "Misery acquaints a man with strange bedfellows. -- The Tempest",
-    "We are three men of sin, whom Destiny hath cast upon this shore. -- The Tempest",
-    "This thing of darkness I acknowledge mine. -- The Tempest",
-    "Full fathom five thy father lies; of his bones are coral made. -- The Tempest",
-    "Be not afeard; the isle is full of noises, sounds and sweet airs that give delight and hurt not. -- The Tempest",
-    "Our revels now are ended. -- The Tempest",
-    "How beauteous mankind is! O brave new world. -- The Tempest",
-    "You taught me language, and my profit on't is, I know how to curse. -- The Tempest",
-    "Now my charms are all o'erthrown, and what strength I have's mine own. -- The Tempest",
-    "I would fain die a dry death. -- The Tempest",
-    "Deeper than did ever plummet sound, I'll drown my book. -- The Tempest",
-    "Where the bee sucks, there suck I; in a cowslip's bell I lie. -- The Tempest",
-    "This is as strange a maze as e'er men trod. -- The Tempest",
-    "To be, or not to be, that is the question. -- Hamlet",
-    "There is nothing either good or bad, but thinking makes it so. -- Hamlet",
-    "This above all: to thine own self be true. -- Hamlet",
-    "The rest is silence. -- Hamlet",
-    "There are more things in heaven and earth, Horatio, than are dreamt of in your philosophy. -- Hamlet",
-    "Though this be madness, yet there is method in't. -- Hamlet",
-    "Brevity is the soul of wit. -- Hamlet",
-    "The lady doth protest too much, methinks. -- Hamlet",
-    "What a piece of work is a man! -- Hamlet",
-    "Something is rotten in the state of Denmark. -- Hamlet",
-    "Give every man thy ear, but few thy voice. -- Hamlet",
-    "The play's the thing wherein I'll catch the conscience of the king. -- Hamlet",
-    "Doubt thou the stars are fire; doubt that the sun doth move; but never doubt I love. -- Hamlet",
-    "When sorrows come, they come not single spies, but in battalions. -- Hamlet",
-    "Alas, poor Yorick! I knew him, Horatio. -- Hamlet",
-    "Frailty, thy name is woman. -- Hamlet",
-    "I must be cruel, only to be kind. -- Hamlet",
-    "There's a divinity that shapes our ends, rough-hew them how we will. -- Hamlet",
-    "The time is out of joint. O cursed spite, that ever I was born to set it right! -- Hamlet",
-    "Words, words, words. -- Hamlet",
-    "Neither a borrower nor a lender be. -- Hamlet",
-    "This is the very ecstasy of love. -- Hamlet",
-    "Conscience does make cowards of us all. -- Hamlet",
+ULYSSES_QUOTES = [
+    "History is a nightmare from which I am trying to awake. -- Ulysses",
+    "Love loves to love love. -- Ulysses",
+    "A man of genius makes no mistakes. His errors are volitional and are the portals of discovery. -- Ulysses",
+    "Think you're escaping and run into yourself. Longest way round is the shortest way home. -- Ulysses",
+    "Yes I said yes I will Yes. -- Ulysses",
+    "Signatures of all things I am here to read, seaspawn and seawrack, the nearing tide, that rusty boot. -- Ulysses",
+    "Ineluctable modality of the visible. -- Ulysses",
+    "Beauty: it curves, curves are beauty. Shapely goddesses, Venus, Juno: curves the world admires. -- Ulysses",
+    "Horseness is the whatness of allhorse. -- Ulysses",
+    "Mr Leopold Bloom ate with relish the inner organs of beasts and fowls. -- Ulysses",
+    "Stately, plump Buck Mulligan came from the stairhead, bearing a bowl of lather on which a mirror and a razor lay crossed. -- Ulysses",
+    "O Jamesy let me up out of this. -- Ulysses",
+    "I was happier then. Or was that I? Or am I now I? Can't bring back time. Like holding water in your hand. -- Ulysses",
+    "What is that word known to all men? -- Ulysses",
+    "Every life is in many days, day after day. We walk through ourselves, meeting robbers, ghosts, giants, old men, young men, wives, widows, brothers-in-love, but always meeting ourselves. -- Ulysses",
+    "The heaventree of stars hung with humid nightblue fruit. -- Ulysses",
+    "We mustn't be led away by words, by sounds of words. -- Ulysses",
+    "Hold to the now, the here, through which all future plunges to the past. -- Ulysses",
+    "I love flowers Id love to have the whole place swimming in roses God of heaven theres nothing like nature. -- Ulysses",
 ]
 
 
@@ -195,7 +173,7 @@ def _is_due(state_file: str, interval: datetime.timedelta) -> bool:
 
 def generate_caption(state_dir: str = ".") -> str:
     """
-    Pick a random Shakespeare quote from Hamlet or The Tempest, excluding
+    Pick a random verbatim quote from James Joyce's Ulysses (public domain in the US), excluding
     whichever quote was used last time (tracked via a small state file).
     """
     state_file = os.path.join(state_dir, "last_quote.txt")
@@ -205,7 +183,7 @@ def generate_caption(state_dir: str = ".") -> str:
         with open(state_file, "r", encoding="utf-8") as f:
             last_quote = f.read().strip()
 
-    choices = [q for q in SHAKESPEARE_QUOTES if q != last_quote] or SHAKESPEARE_QUOTES
+    choices = [q for q in ULYSSES_QUOTES if q != last_quote] or ULYSSES_QUOTES
     chosen = random.choice(choices)
 
     with open(state_file, "w", encoding="utf-8") as f:
