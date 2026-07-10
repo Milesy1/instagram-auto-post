@@ -256,33 +256,15 @@ def record_used_image(source: str, image_url: str, state_dir: str = ".") -> None
         f.write("\n".join(lines) + ("\n" if lines else ""))
 
 
-STABILITY_STYLE_THEMES = [
-    "sharp angular glitch-art with a restrained monochrome or duotone palette and subtle digital artifacts",
-    "fluid organic forms with iridescent, oil-slick gradients flowing across dark negative space",
-    "isometric wireframe architecture floating in empty space, cool blueprint-style linework",
-    "generative particle systems and flow fields, dense clusters thinning into open space",
-    "high-contrast op-art moire patterns in stark black and white",
-    "cellular and biological growth patterns rendered in cool blues and greens, almost microscopic",
-    "brutalist concrete geometric forms under dramatic raking light and hard shadow",
-    "liquid chrome and molten metal abstract sculpture, mirror-like reflections",
-    "retro-futurist gradient grid horizon, warm sunset tones fading to black",
-    "torn-paper collage of overlapping geometric shapes in muted earth tones",
-    "crystalline fractal structures refracting light, sharp facets, jewel-toned palette",
-    "soft gradient blobs and morphing shapes in a minimal pastel palette",
-]
-
-
 def generate_image_prompt(api_key: str) -> str:
-    """
-    Generate a Stability AI prompt from a randomly chosen aesthetic direction,
-    so images vary in style run to run rather than converging on one look.
-    """
-    theme = random.choice(STABILITY_STYLE_THEMES)
+    """Generate a Stability AI prompt in an abstract/geometric/glitch style."""
     return call_claude(
         api_key,
-        f"Write one Stable Diffusion image generation prompt (max 40 words) for an "
-        f"abstract composition in this style: {theme}. No text or logos in the image. "
-        f"Return only the prompt itself, nothing else.",
+        "Write one Stable Diffusion image generation prompt (max 40 words) for an "
+        "abstract geometric composition with a minimal, glitch-art aesthetic -- think "
+        "sharp angular forms, restrained monochrome or duotone palettes, subtle digital "
+        "artifacts, clean negative space. No text or logos in the image. Return only the "
+        "prompt itself, nothing else.",
         max_tokens=100,
     )
 
