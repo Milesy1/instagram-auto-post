@@ -256,16 +256,45 @@ def record_used_image(source: str, image_url: str, state_dir: str = ".") -> None
         f.write("\n".join(lines) + ("\n" if lines else ""))
 
 
+STABILITY_STYLE_THEMES = [
+    "instanced grid array of wireframe cubes at varying scale and rotation, like a "
+    "TouchDesigner instancing output, dark background, thin monospace coordinate "
+    "labels (x,y,z style numbers) scattered near a few of the cubes",
+
+    "sparse 3D point cloud suggesting a coordinate system, faint thin axis lines, "
+    "small monospace number labels near some points as if plotted from a dataset, "
+    "dark background, cool restrained palette",
+
+    "dense data-matrix grid of small monospace numbers and digits arranged like a "
+    "sensor readout or spreadsheet, layered faintly over abstract geometric shapes, "
+    "dark background, monochrome or single accent color",
+
+    "technical wireframe geometric structure with scattered HUD-style numeric "
+    "readouts and coordinate markers around it, like a debug visualization overlay, "
+    "dark background, thin glowing lines",
+
+    "abstract geometric composition with a minimal glitch-art aesthetic, sharp "
+    "angular forms, restrained monochrome or duotone palette, subtle digital "
+    "artifacts, clean negative space",
+]
+
+
 def generate_image_prompt(api_key: str) -> str:
-    """Generate a Stability AI prompt in an abstract/geometric/glitch style."""
+    """
+    Generate a Stability AI prompt from a randomly chosen data-visualization /
+    coordinate-array aesthetic direction, in the spirit of TouchDesigner-style
+    generative outputs -- cube arrays, point clouds, coordinate labels, data grids.
+    """
+    theme = random.choice(STABILITY_STYLE_THEMES)
     return call_claude(
         api_key,
-        "Write one Stable Diffusion image generation prompt (max 40 words) for an "
-        "abstract geometric composition with a minimal, glitch-art aesthetic -- think "
-        "sharp angular forms, restrained monochrome or duotone palettes, subtle digital "
-        "artifacts, clean negative space. No text or logos in the image. Return only the "
-        "prompt itself, nothing else.",
-        max_tokens=100,
+        f"Write one Stable Diffusion image generation prompt (max 40 words) for an "
+        f"abstract technical/generative-art composition: {theme}. Keep the overall "
+        f"aesthetic minimal and restrained, not busy. Illegible or abstract glyph-like "
+        f"marks are fine instead of real numbers -- clarity of the numbers isn't "
+        f"important, the technical/data-readout feeling is what matters. No logos. "
+        f"Return only the prompt itself, nothing else.",
+        max_tokens=120,
     )
 
 def generate_image_via_stability(prompt: str, api_key: str, output_path: str) -> None:
