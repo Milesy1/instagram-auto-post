@@ -85,7 +85,7 @@ WIKIMEDIA_PREFERRED_CATEGORIES = (
 )
 WIKIMEDIA_HEADERS = {"User-Agent": "instagram-auto-post/1.0 (https://github.com/milesy1/instagram-auto-post)"}
 
-VALID_SOURCES = ("stability", "met", "nasa", "artic", "commons")
+VALID_SOURCES = ("stability", "met", "nasa", "artic", "commons", "lorenz")
 USED_IMAGES_LOG = "used_images.log"
 
 ULYSSES_QUOTES = [
@@ -715,6 +715,57 @@ def publish_media(ig_user_id: str, access_token: str, creation_id: str) -> str:
     return result["id"]
 
 
+LORENZ_ACCENT_COLORS = ["#E63946", "#00F5FF", "#F1FAEE"]  # red, cyan, off-white
+
+
+def generate_lorenz_attractor(output_path: str) -> None:
+    """
+    Numerically integrate the Lorenz system (classic chaotic parameters) from a
+    slightly randomized initial condition, and render it as a dark, minimal 3D
+    line plot -- no axes, no grid, just the trajectory itself. Every run produces
+    a genuinely unique trace (different initial condition + camera angle + color),
+    not a repeated/cached image.
+    """
+    import numpy as np
+    from scipy.integrate import solve_ivp
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    sigma, rho, beta = 10, 28, 8 / 3
+
+    def lorenz(t, state):
+        x, y, z = state
+        dx = sigma * (y - x)
+        dy = x * (rho - z) - y
+        dz = x * y - beta * z
+        return [dx, dy, dz]
+
+    # Small random perturbation around the classic starting point, so the
+    # resulting trace is unique each time rather than identical every run.
+    initial_state = [1.0 + random.uniform(-0.5, 0.5) for _ in range(3)]
+
+    t_span = (0, 50)
+    t_eval = np.linspace(*t_span, 20000)
+    sol = solve_ivp(lorenz, t_span, initial_state, t_eval=t_eval)
+    x, y, z = sol.y
+
+    accent_color = random.choice(LORENZ_ACCENT_COLORS)
+    elev = random.uniform(10, 35)
+    azim = random.uniform(0, 360)
+
+    fig = plt.figure(figsize=(10, 10), facecolor="black")
+    ax = fig.add_subplot(111, projection="3d")
+    ax.set_facecolor("black")
+    ax.plot(x, y, z, color=accent_color, linewidth=0.6, alpha=0.9)
+    ax.view_init(elev=elev, azim=azim)
+    ax.set_axis_off()
+    ax.grid(False)
+
+    plt.tight_layout()
+    plt.savefig(output_path, dpi=300, facecolor="black", bbox_inches="tight", pad_inches=0)
+    plt.close(fig)
+
 def _fetch_for_source(source: str, image_path: str, excluded_urls: frozenset = frozenset()) -> tuple:
     """
     Fetch/generate an image for a single source, returning (attribution, image_source_url).
@@ -759,6 +810,12 @@ def _fetch_for_source(source: str, image_path: str, excluded_urls: frozenset = f
         attribution, image_source_url = fetch_wikimedia_image(image_path, excluded_urls=excluded_urls)
         print(f"  -> {attribution}")
         return attribution, image_source_url
+
+    if source == "lorenz":
+        print("Generating a Lorenz attractor...")
+        generate_lorenz_attractor(image_path)
+        print(f"  -> saved to {image_path}")
+        return "Generative -- Lorenz attractor (chaotic system)", None
 
     raise ValueError(f"Unknown source: {source}")
 
