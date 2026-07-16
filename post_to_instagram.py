@@ -773,8 +773,14 @@ CHAOTIC_SYSTEMS = [
     },
 ]
 
-# Two-color, slow-to-fast velocity gradient: deep red (slow) to white (fast).
-LORENZ_VELOCITY_COLORS = ["#8B0000", "#FFFFFF"]
+# Two-color, slow-to-fast velocity gradients. On a dark background, slow blends
+# toward the background (deep red, low contrast) and fast pops (white). On a
+# light background that logic is inverted so fast still reads clearly: slow
+# blends toward the background (pale pink) and fast darkens/saturates (deep red).
+LORENZ_VELOCITY_COLORS_DARK_BG = ["#8B0000", "#FFFFFF"]
+LORENZ_VELOCITY_COLORS_LIGHT_BG = ["#F5D6D6", "#8B0000"]
+LORENZ_BACKGROUND_CHOICES = ["black", "white"]
+LORENZ_BACKGROUND_WEIGHTS = [0.7, 0.3]
 
 # Opacities for the 2-3 overlaid nearby-initial-condition trajectories, in order.
 LORENZ_RUN_ALPHAS = [1.0, 0.6, 0.3]
@@ -806,15 +812,20 @@ def generate_lorenz_attractor(output_path: str) -> str:
     t_span = system_spec["t_span"]
     t_eval = np.linspace(*t_span, system_spec["num_points"])
 
-    cmap = LinearSegmentedColormap.from_list("velocity", LORENZ_VELOCITY_COLORS)
+    background = random.choices(LORENZ_BACKGROUND_CHOICES, weights=LORENZ_BACKGROUND_WEIGHTS)[0]
+    velocity_colors = (
+        LORENZ_VELOCITY_COLORS_LIGHT_BG if background == "white" else LORENZ_VELOCITY_COLORS_DARK_BG
+    )
+
+    cmap = LinearSegmentedColormap.from_list("velocity", velocity_colors)
 
     num_runs = random.choice([2, 3])
     elev = random.uniform(10, 35)
     azim = random.uniform(0, 360)
 
-    fig = plt.figure(figsize=(10, 10), facecolor="black")
+    fig = plt.figure(figsize=(10, 10), facecolor=background)
     ax = fig.add_subplot(111, projection="3d")
-    ax.set_facecolor("black")
+    ax.set_facecolor(background)
 
     bounds_min = np.array([np.inf, np.inf, np.inf])
     bounds_max = np.array([-np.inf, -np.inf, -np.inf])
@@ -860,7 +871,7 @@ def generate_lorenz_attractor(output_path: str) -> str:
     ax.grid(False)
 
     plt.tight_layout()
-    plt.savefig(output_path, dpi=300, facecolor="black", bbox_inches="tight", pad_inches=0)
+    plt.savefig(output_path, dpi=300, facecolor=background, bbox_inches="tight", pad_inches=0)
     plt.close(fig)
 
     return system_spec["label"]
