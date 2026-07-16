@@ -110,6 +110,27 @@ ULYSSES_QUOTES = [
     "I love flowers Id love to have the whole place swimming in roses God of heaven theres nothing like nature. -- Ulysses",
 ]
 
+ELIOT_QUOTES = [
+    "April is the cruellest month, breeding lilacs out of the dead land, mixing memory and desire, stirring dull roots with spring rain. -- The Waste Land",
+    "I will show you fear in a handful of dust. -- The Waste Land",
+    "These fragments I have shored against my ruins. -- The Waste Land",
+    "You know only a heap of broken images, where the sun beats, and the dead tree gives no shelter, the cricket no relief, and the dry stone no sound of water. -- The Waste Land",
+    "Unreal city, under the brown fog of a winter dawn, a crowd flowed over London Bridge, so many, I had not thought death had undone so many. -- The Waste Land",
+    "O you who turn the wheel and look to windward, consider Phlebas, who was once handsome and tall as you. -- The Waste Land",
+    "Datta. Dayadhvam. Damyata. Shantih shantih shantih. -- The Waste Land",
+    "I think we are in rats' alley where the dead men lost their bones. -- The Waste Land",
+    "The Chair she sat in, like a burnished throne, glowed on the marble. -- The Waste Land",
+    "Madame Sosostris, famous clairvoyante, had a bad cold, nevertheless is known to be the wisest woman in Europe, with a wicked pack of cards. -- The Waste Land",
+    "Oed' und leer das Meer. -- The Waste Land",
+    "Those are pearls that were his eyes. -- The Waste Land",
+    "I sat upon the shore fishing, with the arid plain behind me. Shall I at least set my lands in order? -- The Waste Land",
+    "In the mountains, there you feel free. -- The Waste Land",
+    "You gave me hyacinths first a year ago; they called me the hyacinth girl. -- The Waste Land",
+    "Phlebas the Phoenician, a fortnight dead, forgot the cry of gulls, and the deep sea swell and the profit and loss. -- The Waste Land",
+    "Who is the third who walks always beside you? -- The Waste Land",
+    "London Bridge is falling down falling down falling down. -- The Waste Land",
+]
+
 
 def call_claude(api_key: str, prompt: str, max_tokens: int = 150) -> str:
     """Send a single-turn prompt to Claude and return the text response."""
@@ -183,7 +204,8 @@ def generate_caption(state_dir: str = ".") -> str:
         with open(state_file, "r", encoding="utf-8") as f:
             last_quote = f.read().strip()
 
-    choices = [q for q in ULYSSES_QUOTES if q != last_quote] or ULYSSES_QUOTES
+    all_quotes = ULYSSES_QUOTES + ELIOT_QUOTES
+    choices = [q for q in all_quotes if q != last_quote] or all_quotes
     chosen = random.choice(choices)
 
     with open(state_file, "w", encoding="utf-8") as f:
