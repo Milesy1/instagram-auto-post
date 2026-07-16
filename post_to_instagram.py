@@ -715,49 +715,146 @@ def publish_media(ig_user_id: str, access_token: str, creation_id: str) -> str:
     return result["id"]
 
 
-LORENZ_ACCENT_COLORS = ["#E63946", "#00F5FF", "#F1FAEE"]  # red, cyan, off-white
+# Each entry: (label, ODE function factory, base initial state, t_span, num points)
+# The ODE function takes (t, state) -> [dx, dy, dz], matching solve_ivp's signature.
+
+def _lorenz_system(sigma=10, rho=28, beta=8 / 3):
+    def f(t, state):
+        x, y, z = state
+        return [sigma * (y - x), x * (rho - z) - y, x * y - beta * z]
+    return f
 
 
-def generate_lorenz_attractor(output_path: str) -> None:
+def _rossler_system(a=0.2, b=0.2, c=5.7):
+    def f(t, state):
+        x, y, z = state
+        return [-y - z, x + a * y, b + z * (x - c)]
+    return f
+
+
+def _chua_system(alpha=15.6, beta=28, m0=-1.143, m1=-0.714):
+    def diode(x):
+        # Piecewise-linear approximation of Chua's diode nonlinearity.
+        return m1 * x + 0.5 * (m0 - m1) * (abs(x + 1) - abs(x - 1))
+
+    def f(t, state):
+        x, y, z = state
+        dx = alpha * (y - x - diode(x))
+        dy = x - y + z
+        dz = -beta * y
+        return [dx, dy, dz]
+    return f
+
+
+CHAOTIC_SYSTEMS = [
+    {
+        "label": "Lorenz attractor",
+        "make_system": _lorenz_system,
+        "base_state": (1.0, 1.0, 1.0),
+        "perturbation": 0.5,
+        "t_span": (0, 50),
+        "num_points": 20000,
+    },
+    {
+        "label": "Rössler attractor",
+        "make_system": _rossler_system,
+        "base_state": (1.0, 1.0, 1.0),
+        "perturbation": 0.5,
+        "t_span": (0, 200),
+        "num_points": 20000,
+    },
+    {
+        "label": "Chua's circuit attractor",
+        "make_system": _chua_system,
+        "base_state": (0.7, 0.0, 0.0),
+        "perturbation": 0.05,
+        "t_span": (0, 100),
+        "num_points": 20000,
+    },
+]
+
+# Two-color, slow-to-fast velocity gradient: deep red (slow) to white (fast).
+LORENZ_VELOCITY_COLORS = ["#8B0000", "#FFFFFF"]
+
+# Opacities for the 2-3 overlaid nearby-initial-condition trajectories, in order.
+LORENZ_RUN_ALPHAS = [1.0, 0.6, 0.3]
+
+
+def generate_lorenz_attractor(output_path: str) -> str:
     """
-    Numerically integrate the Lorenz system (classic chaotic parameters) from a
-    slightly randomized initial condition, and render it as a dark, minimal 3D
-    line plot -- no axes, no grid, just the trajectory itself. Every run produces
-    a genuinely unique trace (different initial condition + camera angle + color),
-    not a repeated/cached image.
+    Pick one of three chaotic systems (Lorenz, Rössler, or Chua's circuit) at
+    random, numerically integrate 2-3 trajectories from slightly perturbed nearby
+    initial conditions, and render them overlaid as a dark, minimal 3D line plot
+    -- no axes, no grid, just the trajectories, each colored along its length by
+    local velocity magnitude (slow = deep red, fast = white) and each drawn at a
+    different opacity. Every run produces a genuinely unique image (different
+    system + initial conditions + camera angle), not a repeated/cached one.
+    Returns the label of the system that was rendered (for attribution).
     """
     import numpy as np
     from scipy.integrate import solve_ivp
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
+    from matplotlib.colors import LinearSegmentedColormap, Normalize
+    from mpl_toolkits.mplot3d.art3d import Line3DCollection
 
-    sigma, rho, beta = 10, 28, 8 / 3
+    system_spec = random.choice(CHAOTIC_SYSTEMS)
+    system_fn = system_spec["make_system"]()
+    base_state = system_spec["base_state"]
+    perturbation = system_spec["perturbation"]
+    t_span = system_spec["t_span"]
+    t_eval = np.linspace(*t_span, system_spec["num_points"])
 
-    def lorenz(t, state):
-        x, y, z = state
-        dx = sigma * (y - x)
-        dy = x * (rho - z) - y
-        dz = x * y - beta * z
-        return [dx, dy, dz]
+    cmap = LinearSegmentedColormap.from_list("velocity", LORENZ_VELOCITY_COLORS)
 
-    # Small random perturbation around the classic starting point, so the
-    # resulting trace is unique each time rather than identical every run.
-    initial_state = [1.0 + random.uniform(-0.5, 0.5) for _ in range(3)]
-
-    t_span = (0, 50)
-    t_eval = np.linspace(*t_span, 20000)
-    sol = solve_ivp(lorenz, t_span, initial_state, t_eval=t_eval)
-    x, y, z = sol.y
-
-    accent_color = random.choice(LORENZ_ACCENT_COLORS)
+    num_runs = random.choice([2, 3])
     elev = random.uniform(10, 35)
     azim = random.uniform(0, 360)
 
     fig = plt.figure(figsize=(10, 10), facecolor="black")
     ax = fig.add_subplot(111, projection="3d")
     ax.set_facecolor("black")
-    ax.plot(x, y, z, color=accent_color, linewidth=0.6, alpha=0.9)
+
+    bounds_min = np.array([np.inf, np.inf, np.inf])
+    bounds_max = np.array([-np.inf, -np.inf, -np.inf])
+
+    for run_index in range(num_runs):
+        # Small random perturbation around the base starting point, so each
+        # overlaid trajectory diverges from a nearby but distinct initial state.
+        initial_state = [
+            base_state[i] + random.uniform(-perturbation, perturbation)
+            for i in range(3)
+        ]
+
+        sol = solve_ivp(system_fn, t_span, initial_state, t_eval=t_eval)
+        x, y, z = sol.y
+
+        # Local velocity magnitude at every sampled point, from the system's own
+        # derivative -- not a finite-difference approximation of the trace.
+        derivatives = np.array([system_fn(t, state) for t, state in zip(sol.t, sol.y.T)])
+        speed = np.linalg.norm(derivatives, axis=1)
+
+        points = np.array([x, y, z]).T.reshape(-1, 1, 3)
+        segments = np.concatenate([points[:-1], points[1:]], axis=1)
+        segment_speed = (speed[:-1] + speed[1:]) / 2
+
+        lc = Line3DCollection(
+            segments,
+            cmap=cmap,
+            norm=Normalize(vmin=segment_speed.min(), vmax=segment_speed.max()),
+            linewidth=0.6,
+            alpha=LORENZ_RUN_ALPHAS[run_index],
+        )
+        lc.set_array(segment_speed)
+        ax.add_collection3d(lc)
+
+        bounds_min = np.minimum(bounds_min, [x.min(), y.min(), z.min()])
+        bounds_max = np.maximum(bounds_max, [x.max(), y.max(), z.max()])
+
+    ax.set_xlim(bounds_min[0], bounds_max[0])
+    ax.set_ylim(bounds_min[1], bounds_max[1])
+    ax.set_zlim(bounds_min[2], bounds_max[2])
     ax.view_init(elev=elev, azim=azim)
     ax.set_axis_off()
     ax.grid(False)
@@ -765,6 +862,8 @@ def generate_lorenz_attractor(output_path: str) -> None:
     plt.tight_layout()
     plt.savefig(output_path, dpi=300, facecolor="black", bbox_inches="tight", pad_inches=0)
     plt.close(fig)
+
+    return system_spec["label"]
 
 def _fetch_for_source(source: str, image_path: str, excluded_urls: frozenset = frozenset()) -> tuple:
     """
@@ -812,10 +911,10 @@ def _fetch_for_source(source: str, image_path: str, excluded_urls: frozenset = f
         return attribution, image_source_url
 
     if source == "lorenz":
-        print("Generating a Lorenz attractor...")
-        generate_lorenz_attractor(image_path)
-        print(f"  -> saved to {image_path}")
-        return "Generative -- Lorenz attractor (chaotic system)", None
+        print("Generating a chaotic attractor...")
+        system_label = generate_lorenz_attractor(image_path)
+        print(f"  -> saved to {image_path} ({system_label})")
+        return f"Generative -- {system_label} (chaotic system)", None
 
     raise ValueError(f"Unknown source: {source}")
 
