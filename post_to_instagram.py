@@ -746,6 +746,15 @@ def _chua_system(alpha=15.6, beta=28, m0=-1.143, m1=-0.714):
     return f
 
 
+def _aizawa_system(a=0.95, b=0.7, c=0.6, d=3.5, e=0.25, f=0.1):
+    def fn(t, state):
+        x, y, z = state
+        dx = (z - b) * x - d * y
+        dy = d * x + (z - b) * y
+        dz = c + a * z - (z ** 3) / 3 - (x ** 2 + y ** 2) * (1 + e * z) + f * z * x ** 3
+        return [dx, dy, dz]
+    return fn
+
 CHAOTIC_SYSTEMS = [
     {
         "label": "Lorenz attractor",
@@ -771,14 +780,27 @@ CHAOTIC_SYSTEMS = [
         "t_span": (0, 100),
         "num_points": 20000,
     },
-]
+    {
+        "label": "Aizawa attractor",
+        "make_system": _aizawa_system,
+        "base_state": (0.1, 0.0, 0.0),
+        "perturbation": 0.05,
+        "t_span": (0, 100),
+        "num_points": 20000,
+    },]
 
 # Two-color, slow-to-fast velocity gradients. On a dark background, slow blends
 # toward the background (deep red, low contrast) and fast pops (white). On a
 # light background that logic is inverted so fast still reads clearly: slow
 # blends toward the background (pale pink) and fast darkens/saturates (deep red).
-LORENZ_VELOCITY_COLORS_DARK_BG = ["#8B0000", "#FFFFFF"]
-LORENZ_VELOCITY_COLORS_LIGHT_BG = ["#F5D6D6", "#8B0000"]
+LORENZ_VELOCITY_PALETTES_DARK_BG = [
+    ["#8B0000", "#FFFFFF"],  # deep red -> white
+    ["#003B36", "#00F5FF"],  # deep teal -> cyan
+]
+LORENZ_VELOCITY_PALETTES_LIGHT_BG = [
+    ["#F5D6D6", "#8B0000"],  # pale pink -> deep red
+    ["#D6F5F5", "#003B36"],  # pale cyan -> deep teal
+]
 LORENZ_BACKGROUND_CHOICES = ["black", "white"]
 LORENZ_BACKGROUND_WEIGHTS = [0.7, 0.3]
 
@@ -813,8 +835,8 @@ def generate_lorenz_attractor(output_path: str) -> str:
     t_eval = np.linspace(*t_span, system_spec["num_points"])
 
     background = random.choices(LORENZ_BACKGROUND_CHOICES, weights=LORENZ_BACKGROUND_WEIGHTS)[0]
-    velocity_colors = (
-        LORENZ_VELOCITY_COLORS_LIGHT_BG if background == "white" else LORENZ_VELOCITY_COLORS_DARK_BG
+    velocity_colors = random.choice(
+        LORENZ_VELOCITY_PALETTES_LIGHT_BG if background == "white" else LORENZ_VELOCITY_PALETTES_DARK_BG
     )
 
     cmap = LinearSegmentedColormap.from_list("velocity", velocity_colors)
