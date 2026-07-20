@@ -36,6 +36,7 @@ import re
 import sys
 import time
 import random
+import inspect
 import tempfile
 import datetime
 import requests
@@ -829,17 +830,53 @@ LORENZ_BACKGROUND_WEIGHTS = [0.7, 0.3]
 # Opacities for the 2-3 overlaid nearby-initial-condition trajectories, in order.
 LORENZ_RUN_ALPHAS = [1.0, 0.6, 0.3]
 
+# Display symbols for each system's parameter names, for the technical caption line.
+CHAOTIC_PARAM_SYMBOLS = {
+    "sigma": "σ", "rho": "ρ", "beta": "β", "alpha": "α",
+    "m0": "m₀", "m1": "m₁",
+    "a": "a", "b": "b", "c": "c", "d": "d", "e": "e", "f": "f",
+}
 
-def generate_lorenz_attractor(output_path: str) -> str:
+
+def _system_parameters(make_system) -> dict:
+    """The {name: default_value} parameters actually used to construct a chaotic
+    system function (introspected from its signature, so this can't drift out
+    of sync with the real defaults in _lorenz_system/_rossler_system/etc.)."""
+    return {name: param.default for name, param in inspect.signature(make_system).parameters.items()}
+
+
+def _format_number(value) -> str:
+    rounded = round(value, 2)
+    return f"{rounded:g}"
+
+
+def format_attractor_technical_line(params: dict, initial_state) -> str:
     """
-    Pick one of three chaotic systems (Lorenz, Rössler, or Chua's circuit) at
-    random, numerically integrate 2-3 trajectories from slightly perturbed nearby
-    initial conditions, and render them overlaid as a dark, minimal 3D line plot
-    -- no axes, no grid, just the trajectories, each colored along its length by
-    local velocity magnitude (slow = deep red, fast = white) and each drawn at a
-    different opacity. Every run produces a genuinely unique image (different
-    system + initial conditions + camera angle), not a repeated/cached one.
-    Returns the label of the system that was rendered (for attribution).
+    Format the exact parameters and initial conditions used for a render as a
+    short, precise technical line, e.g. "σ=10, ρ=28, β=2.67 -- initial state (1.03, 0.98, 1.01)".
+    Values are the real numbers used, not paraphrased, so this reads as
+    documentation of the actual generative process rather than decoration.
+    """
+    param_str = ", ".join(f"{CHAOTIC_PARAM_SYMBOLS.get(name, name)}={_format_number(value)}" for name, value in params.items())
+    state_str = ", ".join(_format_number(v) for v in initial_state)
+    return f"{param_str} -- initial state ({state_str})"
+
+
+def generate_lorenz_attractor(output_path: str) -> tuple:
+    """
+    Pick one of four chaotic systems (Lorenz, Rössler, Chua's circuit, or Aizawa)
+    at random, numerically integrate 2-3 trajectories from slightly perturbed
+    nearby initial conditions, and render them overlaid as a dark, minimal 3D
+    line plot -- no axes, no grid, just the trajectories, each colored along
+    its length by local velocity magnitude (slow = deep red, fast = white) and
+    each drawn at a different opacity. Every run produces a genuinely unique
+    image (different system + initial conditions + camera angle), not a
+    repeated/cached one.
+
+    Returns (label, technical_line): the system's display name, and a short
+    line reporting the exact parameter values and the first trajectory's
+    initial conditions used for this specific render (see
+    format_attractor_technical_line), for use in the post's caption.
     """
     import numpy as np
     from scipy.integrate import solve_ivp
@@ -850,6 +887,7 @@ def generate_lorenz_attractor(output_path: str) -> str:
     from mpl_toolkits.mplot3d.art3d import Line3DCollection
 
     system_spec = random.choice(CHAOTIC_SYSTEMS)
+    system_params = _system_parameters(system_spec["make_system"])
     system_fn = system_spec["make_system"]()
     base_state = system_spec["base_state"]
     perturbation = system_spec["perturbation"]
@@ -873,6 +911,7 @@ def generate_lorenz_attractor(output_path: str) -> str:
 
     bounds_min = np.array([np.inf, np.inf, np.inf])
     bounds_max = np.array([-np.inf, -np.inf, -np.inf])
+    primary_initial_state = None
 
     for run_index in range(num_runs):
         # Small random perturbation around the base starting point, so each
@@ -881,6 +920,8 @@ def generate_lorenz_attractor(output_path: str) -> str:
             base_state[i] + random.uniform(-perturbation, perturbation)
             for i in range(3)
         ]
+        if run_index == 0:
+            primary_initial_state = tuple(initial_state)
 
         sol = solve_ivp(system_fn, t_span, initial_state, t_eval=t_eval)
         x, y, z = sol.y
@@ -918,7 +959,9 @@ def generate_lorenz_attractor(output_path: str) -> str:
     plt.savefig(output_path, dpi=300, facecolor=background, bbox_inches="tight", pad_inches=0)
     plt.close(fig)
 
-    return system_spec["label"]
+    technical_line = format_attractor_technical_line(system_params, primary_initial_state)
+    return system_spec["label"], technical_line
+
 
 def _fetch_for_source(source: str, image_path: str, excluded_urls: frozenset = frozenset()) -> tuple:
     """
@@ -967,9 +1010,11 @@ def _fetch_for_source(source: str, image_path: str, excluded_urls: frozenset = f
 
     if source == "lorenz":
         print("Generating a chaotic attractor...")
-        system_label = generate_lorenz_attractor(image_path)
+        system_label, technical_line = generate_lorenz_attractor(image_path)
         print(f"  -> saved to {image_path} ({system_label})")
-        return f"Generative -- {system_label} (chaotic system)", None
+        print(f"  -> {technical_line}")
+        attribution = f"Generative -- {system_label} (chaotic system)\n{technical_line}"
+        return attribution, None
 
     raise ValueError(f"Unknown source: {source}")
 
