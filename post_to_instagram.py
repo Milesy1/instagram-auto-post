@@ -257,44 +257,60 @@ def record_used_image(source: str, image_url: str, state_dir: str = ".") -> None
         f.write("\n".join(lines) + ("\n" if lines else ""))
 
 
-STABILITY_STYLE_THEMES = [
+
+# Color and aesthetic are chosen independently and combined per run, so output
+# varies meaningfully across posts instead of converging on one look (Claude
+# defaulting to blue-toned "technical" imagery when no color was specified).
+STABILITY_COLOR_PALETTES = [
+    "monochrome red and black -- deep blood-red tones against black, no other colors",
+    "deep green and black -- dark forest/emerald green tones against black, no other colors",
+    "amber and black -- warm amber-orange glow against black, no other colors",
+    "stark white and black -- high-contrast black and white only, no color at all",
+    "cyan and black -- electric cyan tones against black, no other colors",
+    "muted rust and ochre earth tones against near-black -- warm, weathered, desaturated",
+]
+# Earth tones are meant to show up only occasionally, not as often as the rest.
+STABILITY_COLOR_WEIGHTS = [2, 2, 2, 2, 2, 1]
+
+STABILITY_AESTHETIC_STYLES = [
     "instanced grid array of wireframe cubes at varying scale and rotation, like a "
-    "TouchDesigner instancing output, dark background, thin monospace coordinate "
-    "labels (x,y,z style numbers) scattered near a few of the cubes",
+    "TouchDesigner instancing output -- thin geometric wireframe structure",
 
-    "sparse 3D point cloud suggesting a coordinate system, faint thin axis lines, "
-    "small monospace number labels near some points as if plotted from a dataset, "
-    "dark background, cool restrained palette",
+    "smooth fluid organic forms -- flowing curves, soft undulating surfaces, "
+    "liquid-like morphing shapes, no hard edges",
 
-    "dense data-matrix grid of small monospace numbers and digits arranged like a "
-    "sensor readout or spreadsheet, layered faintly over abstract geometric shapes, "
-    "dark background, monochrome or single accent color",
+    "sharp architectural brutalist shapes -- massive angular concrete-like blocks "
+    "and monoliths, dramatic hard shadows, monumental geometric forms",
 
-    "technical wireframe geometric structure with scattered HUD-style numeric "
-    "readouts and coordinate markers around it, like a debug visualization overlay, "
-    "dark background, thin glowing lines",
+    "sparse 3D point cloud or dense particle field suggesting a coordinate system "
+    "or star field, faint thin axis lines, small monospace number labels near some "
+    "points as if plotted from a dataset",
 
-    "abstract geometric composition with a minimal glitch-art aesthetic, sharp "
-    "angular forms, restrained monochrome or duotone palette, subtle digital "
-    "artifacts, clean negative space",
+    "glitch and digital distortion -- abstract composition with scan-line artifacts, "
+    "pixel sorting, data-corruption glitch effects, subtle digital noise",
 ]
 
 
 def generate_image_prompt(api_key: str) -> str:
     """
-    Generate a Stability AI prompt from a randomly chosen data-visualization /
-    coordinate-array aesthetic direction, in the spirit of TouchDesigner-style
-    generative outputs -- cube arrays, point clouds, coordinate labels, data grids.
+    Generate a Stability AI prompt combining one randomly chosen color palette and
+    one randomly chosen aesthetic/style direction, selected independently of each
+    other, so output varies meaningfully across posts instead of converging on one
+    look. The overall dark/minimal/moody tone stays constant; only color and
+    stylistic treatment vary.
     """
-    theme = random.choice(STABILITY_STYLE_THEMES)
+    color = random.choices(STABILITY_COLOR_PALETTES, weights=STABILITY_COLOR_WEIGHTS)[0]
+    aesthetic = random.choice(STABILITY_AESTHETIC_STYLES)
     return call_claude(
         api_key,
         f"Write one Stable Diffusion image generation prompt (max 40 words) for an "
-        f"abstract technical/generative-art composition: {theme}. Keep the overall "
-        f"aesthetic minimal and restrained, not busy. Illegible or abstract glyph-like "
-        f"marks are fine instead of real numbers -- clarity of the numbers isn't "
-        f"important, the technical/data-readout feeling is what matters. No logos. "
-        f"Return only the prompt itself, nothing else.",
+        f"abstract generative-art composition combining this aesthetic direction: "
+        f"{aesthetic}. Color palette: {color}. Keep the overall feel dark, minimal, "
+        f"moody and restrained, not busy. Illegible or abstract glyph-like marks are "
+        f"fine instead of real numbers where applicable -- clarity of numbers isn't "
+        f"important, the technical/data-readout feeling is what matters when present. "
+        f"No logos. Use only the specified color palette -- do not introduce any "
+        f"other colors. Return only the prompt itself, nothing else.",
         max_tokens=120,
     )
 
