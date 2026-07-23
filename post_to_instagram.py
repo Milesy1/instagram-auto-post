@@ -86,7 +86,7 @@ WIKIMEDIA_PREFERRED_CATEGORIES = (
 )
 WIKIMEDIA_HEADERS = {"User-Agent": "instagram-auto-post/1.0 (https://github.com/milesy1/instagram-auto-post)"}
 
-VALID_SOURCES = ("stability", "met", "nasa", "artic", "commons", "lorenz")
+VALID_SOURCES = ("stability", "met", "nasa", "artic", "commons", "lorenz", "pexels")
 USED_IMAGES_LOG = "used_images.log"
 
 ULYSSES_QUOTES = [
@@ -540,6 +540,54 @@ def _has_blocklisted_category(categories: list) -> bool:
 def _has_preferred_category(categories: list) -> bool:
     return any(keyword in cat for cat in categories for keyword in WIKIMEDIA_PREFERRED_CATEGORIES)
 
+
+PEXELS_SEARCH_TERMS = [
+    "brutalist architecture",
+    "minimal geometric shadow",
+    "abstract architecture",
+    "architectural lines pattern",
+    "minimalist building facade",
+    "geometric shapes shadow light",
+]
+
+
+def fetch_pexels_photo(output_path: str, api_key: str, excluded_urls: frozenset = frozenset(), max_attempts: int = 5) -> tuple:
+    """
+    Search Pexels for a curated architectural/geometric photo, download it,
+    and return (attribution, image_url).
+    """
+    query = random.choice(PEXELS_SEARCH_TERMS)
+    resp = requests.get(
+        "https://api.pexels.com/v1/search",
+        headers={"Authorization": api_key},
+        params={"query": query, "per_page": 30, "orientation": "portrait"},
+        timeout=30,
+    )
+    resp.raise_for_status()
+    photos = resp.json().get("photos") or []
+
+    if not photos:
+        raise RuntimeError(f"No Pexels results found for query '{query}'")
+
+    random.shuffle(photos)
+
+    for photo in photos[:max_attempts]:
+        image_url = photo.get("src", {}).get("large2x") or photo.get("src", {}).get("original")
+        if not image_url or image_url in excluded_urls:
+            continue
+
+        image_resp = requests.get(image_url, timeout=60)
+        if image_resp.status_code != 200:
+            continue
+
+        with open(output_path, "wb") as f:
+            f.write(image_resp.content)
+
+        photographer = photo.get("photographer", "Unknown photographer")
+        attribution = f"Photo by {photographer} on Pexels"
+        return attribution, image_url
+
+    raise RuntimeError(f"Could not find a usable Pexels image for query '{query}' after {max_attempts} attempts")
 
 def fetch_wikimedia_image(output_path: str, max_attempts: int = 25, excluded_urls: frozenset = frozenset()) -> tuple:
     """
@@ -1031,6 +1079,13 @@ def _fetch_for_source(source: str, image_path: str, excluded_urls: frozenset = f
         print(f"  -> {technical_line}")
         attribution = f"Generative -- {system_label} (chaotic system)\n{technical_line}"
         return attribution, None
+
+    if source == "pexels":
+        pexels_key = get_env("PEXELS_API_KEY")
+        print("Fetching a curated architectural photo from Pexels...")
+        attribution, image_source_url = fetch_pexels_photo(image_path, pexels_key, excluded_urls=excluded_urls)
+        print(f"  -> {attribution}")
+        return attribution, image_source_url
 
     raise ValueError(f"Unknown source: {source}")
 
