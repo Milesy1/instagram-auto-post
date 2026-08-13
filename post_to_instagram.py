@@ -285,6 +285,14 @@ STABILITY_AESTHETIC_STYLES = [
 
     "glitch and digital distortion -- abstract composition with scan-line artifacts, "
     "pixel sorting, data-corruption glitch effects, subtle digital noise",
+
+    "connected node network -- graph or circuit-like structure of points linked by "
+    "thin lines, some nodes glowing brighter than others, like a network diagram "
+    "floating in dark space",
+
+    "exploded technical diagram -- a geometric solid separated into floating "
+    "component layers, like a blueprint or schematic exploded view, thin "
+    "connecting guide lines between the layers",
 ]
 
 
