@@ -279,9 +279,6 @@ STABILITY_AESTHETIC_STYLES = [
     "smooth fluid organic forms -- flowing curves, soft undulating surfaces, "
     "liquid-like morphing shapes, no hard edges",
 
-    "sharp architectural brutalist shapes -- massive angular concrete-like blocks "
-    "and monoliths, dramatic hard shadows, monumental geometric forms",
-
     "sparse 3D point cloud or dense particle field suggesting a coordinate system "
     "or star field, faint thin axis lines, small monospace number labels near some "
     "points as if plotted from a dataset",
