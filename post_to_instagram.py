@@ -135,16 +135,8 @@ ELIOT_QUOTES = [
 
 # Add another author's verbatim, verified public-domain quotes here, following
 # the same format as ULYSSES_QUOTES and ELIOT_QUOTES above.
-FINNEGANS WAKE_QUOTES = [
-    “They lived and laughed and loved and left. -- Finnegans Wake”,
-    “First we feel. Then we fall. -- Finnegans Wake”,
-    “bababadalgharaghtakamminarronnkonnbronntonnerronntuonnthunntrovarrhounawnskawntoohoohoordenenthurnuk! -- Finnegans Wake”,
-    “A way a lone a last a loved a long the riverrun, past Eve and Adam's, from swerve of shore to bend of bay, brings us by a commodius vicus of recirculation back to Howth Castle and Environs. -- Finnegans Wake”,
-    “Let us leave theories there and return to here's hear. -- Finnegans Wake”,
-    “Three quarks for Muster Mark! -- Finnegans Wake”,
-    "“Thus the unfacts, did we possess them, are too imprecisely few to warrant our certitude... -- Finnegans Wake"
-    “riverrun, past Eve and Adam's, from swerve of shore to bend of bay, brings us by a commodius vicus of recirculation back to Howth Castle and Environs. -- Finnegans Wake”
-    
+NEW_QUOTES = [
+    # "Some quote here. -- Source Title",
 ]
 
 
@@ -220,7 +212,7 @@ def generate_caption(state_dir: str = ".") -> str:
         with open(state_file, "r", encoding="utf-8") as f:
             last_quote = f.read().strip()
 
-    all_quotes = ULYSSES_QUOTES + ELIOT_QUOTES + NEW_QUOTES + FINNEGANS_WAKE_QUOTES 
+    all_quotes = ULYSSES_QUOTES + ELIOT_QUOTES + NEW_QUOTES 
     choices = [q for q in all_quotes if q != last_quote] or all_quotes
     chosen = random.choice(choices)
 
