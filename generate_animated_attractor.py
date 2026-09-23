@@ -114,13 +114,42 @@ SYSTEMS = {
 }
 
 
+CHAOTIC_PARAM_SYMBOLS = {
+    "sigma": "\u03c3", "rho": "\u03c1", "beta": "\u03b2", "alpha": "\u03b1",
+    "m0": "m\u2080", "m1": "m\u2081",
+    "a": "a", "b": "b", "c": "c", "d": "d", "e": "e", "f": "f",
+}
+
+
+def _system_parameters(make_system) -> dict:
+    """The {name: default_value} parameters actually used to construct a chaotic
+    system function, introspected from its signature."""
+    import inspect
+    return {name: param.default for name, param in inspect.signature(make_system).parameters.items()}
+
+
+def _format_number(value) -> str:
+    rounded = round(value, 2)
+    return f"{rounded:g}"
+
+
+def format_attractor_technical_line(params: dict, initial_state) -> str:
+    """Same format as the static image generator's technical caption line, e.g.
+    "sigma=10, rho=28, beta=2.67 -- initial state (1.03, 0.98, 1.01)"."""
+    param_str = ", ".join(f"{CHAOTIC_PARAM_SYMBOLS.get(name, name)}={_format_number(value)}" for name, value in params.items())
+    state_str = ", ".join(_format_number(v) for v in initial_state)
+    return f"{param_str} -- initial state ({state_str})"
+
+
 def solve_trajectory(system_name: str):
     spec = SYSTEMS[system_name]
     fn = spec["make"]()
+    params = _system_parameters(spec["make"])
     initial = [spec["base_state"][i] + random.uniform(-1, 1) * spec["perturbation"] for i in range(3)]
     t_eval = np.linspace(*spec["t_span"], spec["num_points"])
     sol = solve_ivp(fn, spec["t_span"], initial, t_eval=t_eval)
-    return sol.y  # shape (3, num_points): x, y, z arrays
+    technical_line = format_attractor_technical_line(params, initial)
+    return sol.y, technical_line  # (3, num_points) x/y/z arrays, plus the caption line
 
 
 def velocity_magnitudes(system_name: str, xyz):
@@ -134,7 +163,8 @@ def velocity_magnitudes(system_name: str, xyz):
 
 
 def make_animation(system_name: str, output_path: str, duration_seconds: int = 8, fps: int = 24):
-    x, y, z = solve_trajectory(system_name)
+    xyz, technical_line = solve_trajectory(system_name)
+    x, y, z = xyz
     speed = velocity_magnitudes(system_name, (x, y, z))
     speed_norm = (speed - speed.min()) / (speed.max() - speed.min() + 1e-9)
 
@@ -200,7 +230,7 @@ def make_animation(system_name: str, output_path: str, duration_seconds: int = 8
         output_path = gif_path
 
     plt.close(fig)
-    attribution = f"Generative -- {system_name.capitalize()} attractor animation ({palette_name} palette, {background} background)"
+    attribution = f"Generative -- {system_name.capitalize()} attractor animation ({palette_name} palette, {background} background)\n{technical_line}"
     return output_path, attribution
 
 
