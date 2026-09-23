@@ -78,6 +78,8 @@ def _aizawa_system(a=0.95, b=0.7, c=0.6, d=3.5, e=0.25, f=0.1):
 # Multiple color palettes (matplotlib colormap names), randomly chosen per
 # render, so animations vary in color as well as system/camera angle.
 COLOR_PALETTES = ['hot', 'cool', 'viridis', 'inferno', 'bone', 'copper']
+BACKGROUND_CHOICES = ['black', 'white']
+BACKGROUND_WEIGHTS = [0.7, 0.3]
 
 
 SYSTEMS = {
@@ -141,19 +143,29 @@ def make_animation(system_name: str, output_path: str, duration_seconds: int = 8
     # First 70% of frames: trajectory grows in. Last 30%: fully drawn, camera keeps rotating.
     draw_frames = int(total_frames * 0.7)
 
-    fig = plt.figure(figsize=(6, 10.67), facecolor="black")
+    background = random.choices(BACKGROUND_CHOICES, weights=BACKGROUND_WEIGHTS)[0]
+    fig = plt.figure(figsize=(6, 10.67), facecolor=background)
     ax = fig.add_subplot(111, projection="3d")
-    ax.set_facecolor("black")
+    ax.set_facecolor(background)
     ax.set_axis_off()
     ax.grid(False)
 
-    margin = 0.05 * (x.max() - x.min())
+    margin = 0.02 * (x.max() - x.min())
     ax.set_xlim(x.min() - margin, x.max() + margin)
     ax.set_ylim(y.min() - margin, y.max() + margin)
     ax.set_zlim(z.min() - margin, z.max() + margin)
 
+    # Push the 3D axes beyond the figure's edges so the attractor fills the
+    # vertical frame instead of sitting small in the middle with black
+    # letterboxing -- matplotlib's default 3D subplot padding is generous.
+    fig.subplots_adjust(left=-0.35, right=1.35, top=1.25, bottom=-0.2)
+
     palette_name = random.choice(COLOR_PALETTES)
-    cmap = plt.get_cmap(palette_name)
+    # On a white background, invert the colormap direction (append _r) so
+    # slow points read as light/blending-in and fast points read as dark/
+    # saturated -- mirroring the static image generator's logic, since the
+    # named colormaps above go dark-to-light by default (built for dark bg).
+    cmap = plt.get_cmap(palette_name + '_r' if background == 'white' else palette_name)
     line_collection = Line3DCollection([[(x[0], y[0], z[0]), (x[1], y[1], z[1])]], linewidths=1.1)
     ax.add_collection3d(line_collection)
 
@@ -188,7 +200,7 @@ def make_animation(system_name: str, output_path: str, duration_seconds: int = 8
         output_path = gif_path
 
     plt.close(fig)
-    attribution = f"Generative -- {system_name.capitalize()} attractor animation ({palette_name} palette)"
+    attribution = f"Generative -- {system_name.capitalize()} attractor animation ({palette_name} palette, {background} background)"
     return output_path, attribution
 
 
