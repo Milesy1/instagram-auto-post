@@ -165,6 +165,8 @@ FEED_POST_INTERVAL = datetime.timedelta(hours=4, minutes=40)
 STORY_POST_INTERVAL = datetime.timedelta(hours=20)
 LAST_FEED_POST_FILE = "last_feed_post.txt"
 LAST_STORY_POST_FILE = "last_story_post.txt"
+LAST_REEL_POST_FILE = "last_reel_post.txt"
+REEL_POST_INTERVAL = datetime.timedelta(hours=24)
 
 
 def _read_last_run_time(state_file: str):
@@ -758,18 +760,21 @@ def upload_to_cloudinary(image_path: str, cloud_name: str, upload_preset: str) -
     return transformed_url
 
 
-def create_media_container(ig_user_id: str, access_token: str, image_url: str, caption: str = None, media_type: str = None) -> str:
+def create_media_container(ig_user_id: str, access_token: str, media_url: str, caption: str = None, media_type: str = None, is_video: bool = False) -> str:
     """
     Create an Instagram media container and return its creation_id.
 
     caption is omitted for Stories (media_type="STORIES"), since the Graph API
-    doesn't support captions on that media type.
+    doesn't support captions on that media type. is_video controls whether
+    media_url is sent as image_url or video_url -- the Graph API requires the
+    correct field name depending on content type (e.g. media_type="REELS"
+    needs video_url, not image_url).
     """
     url = f"{GRAPH_BASE}/{ig_user_id}/media"
     data = {
-        "image_url": image_url,
         "access_token": access_token,
     }
+    data["video_url" if is_video else "image_url"] = media_url
     if caption:
         data["caption"] = caption
     if media_type:
@@ -779,6 +784,23 @@ def create_media_container(ig_user_id: str, access_token: str, image_url: str, c
     result = _parse_json_response(resp, "Container creation failed")
     return result["id"]
 
+
+def upload_video_to_cloudinary(video_path: str, cloud_name: str, upload_preset: str) -> str:
+    """Upload a video to Cloudinary (unsigned) and return its public delivery URL."""
+    url = f"https://api.cloudinary.com/v1_1/{cloud_name}/video/upload"
+
+    with open(video_path, "rb") as f:
+        files = {"file": f}
+        data = {"upload_preset": upload_preset}
+        resp = requests.post(url, files=files, data=data, timeout=300)
+
+    resp.raise_for_status()
+    result = resp.json()
+
+    if "error" in result:
+        raise RuntimeError(f"Cloudinary video upload failed: {result['error']}")
+
+    return result["secure_url"]
 
 def wait_for_container_ready(creation_id: str, access_token: str, timeout_seconds: int = 60) -> None:
     """Poll the container status until it's FINISHED, or raise on error/timeout."""
@@ -1218,6 +1240,51 @@ def post_story():
     raise RuntimeError(f"Could not publish a Story from any source: {last_error}")
 
 
+def post_reel():
+    """
+    Post a single Instagram Reel: render an animated chaotic attractor
+    (random system, random color palette, 9:16 vertical), upload it to
+    Cloudinary as a video, and publish it via the Graph API's REELS media
+    type. Uses a real caption (unlike Stories, Reels support captions).
+    """
+    from generate_animated_attractor import generate_animated_attractor
+
+    cloud_name = get_env("CLOUDINARY_CLOUD_NAME")
+    upload_preset = get_env("CLOUDINARY_UPLOAD_PRESET")
+    ig_user_id = get_env("IG_USER_ID")
+    access_token = get_env("IG_ACCESS_TOKEN")
+
+    print("Selecting caption...")
+    quote = generate_caption()
+    print(f"  -> {quote}")
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        video_path = os.path.join(tmpdir, "reel.mp4")
+
+        print("Generating animated attractor (this takes a few minutes)...")
+        attribution = generate_animated_attractor(video_path)
+        print(f"  -> {attribution}")
+
+        caption = f"{quote}\n\n{attribution}\n\nUploaded via Miles' Graph API"
+
+        print("Uploading video to Cloudinary...")
+        video_url = upload_video_to_cloudinary(video_path, cloud_name, upload_preset)
+        print(f"  -> {video_url}")
+
+        print("Creating Instagram Reel media container...")
+        creation_id = create_media_container(
+            ig_user_id, access_token, video_url, caption=caption, media_type="REELS", is_video=True
+        )
+        print(f"  -> creation_id: {creation_id}")
+
+        print("Waiting for container to finish processing (video takes longer than images)...")
+        wait_for_container_ready(creation_id, access_token, timeout_seconds=300)
+        print("  -> FINISHED")
+
+        print("Publishing Reel to Instagram...")
+        media_id = publish_media(ig_user_id, access_token, creation_id)
+        print(f"  -> Published! Media ID: {media_id}")
+
 def auto_feed():
     """
     Called every 15 minutes by the scheduled workflow. Posts a feed image only
@@ -1247,6 +1314,17 @@ def auto_story():
     _write_last_run_time(LAST_STORY_POST_FILE)
 
 
+def auto_reel():
+    """Same due-check pattern as auto_feed(), but for the once-daily Reel post."""
+    if not _is_due(LAST_REEL_POST_FILE, REEL_POST_INTERVAL):
+        last = _read_last_run_time(LAST_REEL_POST_FILE)
+        remaining = REEL_POST_INTERVAL - (datetime.datetime.now(datetime.timezone.utc) - last)
+        print(f"Not due yet -- last Reel post was {last.isoformat()}, next one in ~{remaining}.")
+        return
+
+    post_reel()
+    _write_last_run_time(LAST_REEL_POST_FILE)
+
 def main():
     """
     CLI entry point.
@@ -1263,8 +1341,12 @@ def main():
         auto_feed()
     elif args == ["--auto-story"]:
         auto_story()
+    elif args == ["--auto-reel"]:
+        auto_reel()
     elif args == ["--story"]:
         post_story()
+    elif args == ["--reel"]:
+        post_reel()
     elif len(args) == 0:
         run_feed_post()
     elif len(args) == 1 and args[0] in VALID_SOURCES:
