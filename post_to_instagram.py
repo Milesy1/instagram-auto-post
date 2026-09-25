@@ -37,6 +37,9 @@ import sys
 import time
 import random
 import inspect
+
+sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 import tempfile
 import datetime
 import requests
