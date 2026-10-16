@@ -162,7 +162,7 @@ def velocity_magnitudes(system_name: str, xyz):
     return vels
 
 
-def make_animation(system_name: str, output_path: str, duration_seconds: int = 8, fps: int = 24):
+def make_animation(system_name: str, output_path: str, duration_seconds: int = 15, fps: int = 24):
     xyz, technical_line = solve_trajectory(system_name)
     x, y, z = xyz
     speed = velocity_magnitudes(system_name, (x, y, z))

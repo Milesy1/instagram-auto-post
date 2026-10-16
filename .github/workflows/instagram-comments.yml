@@ -1,0 +1,40 @@
+name: Instagram Comment Reply (Meles)
+
+on:
+  schedule:
+    # Runs every 15 minutes, checking recent posts for new comments and
+    # replying in character as Meles. No due-check needed here (unlike the
+    # feed/story/reel posters) -- it's fine, even desirable, for this to
+    # run as often as possible so replies feel timely.
+    - cron: '*/15 * * * *'
+  workflow_dispatch: {}  # allows manual triggering from the Actions tab for testing
+
+jobs:
+  reply-to-comments:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Check for and reply to new comments
+        env:
+          IG_USER_ID: ${{ secrets.IG_USER_ID }}
+          IG_ACCESS_TOKEN: ${{ secrets.IG_ACCESS_TOKEN }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: python instagram_comment_bot.py
+
+      - name: Commit updated state (only if something was actually replied to)
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add replied_comments.log
+          git diff --staged --quiet || git commit -m "Record newly replied-to comments [skip ci]"
+          git push

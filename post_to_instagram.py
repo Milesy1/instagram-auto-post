@@ -143,8 +143,16 @@ NEW_QUOTES = [
 ]
 
 
-def call_claude(api_key: str, prompt: str, max_tokens: int = 150) -> str:
+def call_claude(api_key: str, prompt: str, max_tokens: int = 150, system: str = None) -> str:
     """Send a single-turn prompt to Claude and return the text response."""
+    payload = {
+        "model": "claude-sonnet-4-6",
+        "max_tokens": max_tokens,
+        "messages": [{"role": "user", "content": prompt}],
+    }
+    if system:
+        payload["system"] = system
+
     resp = requests.post(
         "https://api.anthropic.com/v1/messages",
         headers={
@@ -152,11 +160,7 @@ def call_claude(api_key: str, prompt: str, max_tokens: int = 150) -> str:
             "anthropic-version": "2023-06-01",
             "content-type": "application/json",
         },
-        json={
-            "model": "claude-sonnet-4-6",
-            "max_tokens": max_tokens,
-            "messages": [{"role": "user", "content": prompt}],
-        },
+        json=payload,
         timeout=30,
     )
     resp.raise_for_status()
