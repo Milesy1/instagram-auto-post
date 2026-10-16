@@ -35,6 +35,7 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
+          touch replied_comments.log
           git add replied_comments.log
           git diff --staged --quiet || git commit -m "Record newly replied-to comments [skip ci]"
           git push
